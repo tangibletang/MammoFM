@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MammoFM — Mammography Report Generator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>MammoFM</h1>
+    <p class="subtitle">Two-stage mammography report generator</p>
+
+    <form id="reportForm">
+      <div class="row">
+        <label>Patient ID <input type="text" name="patient_id" required /></label>
+        <label>Exam ID    <input type="text" name="exam_id"    required /></label>
+      </div>
+
+      <fieldset>
+        <legend>Upload 4 views (PNG)</legend>
+        <div class="uploads">
+          <label>LCC  <input type="file" name="lcc"  accept=".png" required /></label>
+          <label>LMLO <input type="file" name="lmlo" accept=".png" required /></label>
+          <label>RCC  <input type="file" name="rcc"  accept=".png" required /></label>
+          <label>RMLO <input type="file" name="rmlo" accept=".png" required /></label>
+        </div>
+      </fieldset>
+
+      <div class="optional-csv">
+        <label>
+          Classifier CSV (optional — provides zero-shot findings)
+          <input type="file" name="classifier_csv" accept=".csv" />
+        </label>
+      </div>
+
+      <button type="submit" id="submitBtn">Generate Report</button>
+    </form>
+
+    <div id="progress" class="hidden">
+      <h2>Progress</h2>
+      <div class="steps">
+        <div class="step" id="step-encoding">Image encoding</div>
+        <div class="step" id="step-stage1">Stage 1 — LLaVA</div>
+        <div class="step" id="step-converting">Converting</div>
+        <div class="step" id="step-stage2">Stage 2 — LLaMA</div>
+      </div>
+      <p id="statusMsg"></p>
+    </div>
+
+    <div id="results" class="hidden">
+      <div class="report-box">
+        <h2>Preliminary Report <span class="tag">Stage 1</span></h2>
+        <pre id="prelimReport"></pre>
+      </div>
+      <div class="report-box">
+        <h2>Final Report <span class="tag">Stage 2</span></h2>
+        <pre id="finalReport"></pre>
+      </div>
+    </div>
+
+    <div id="errorBox" class="hidden error">
+      <strong>Error:</strong> <span id="errorMsg"></span>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
