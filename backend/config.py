@@ -14,14 +14,14 @@ FINAL_STAGE_SCRIPT = f"{LLAVA_SRC}/final_stage.py"
 JSON_TO_CSV_SCRIPT = f"{REPO_DIR}/backend/json_to_csv.py"
 
 MODEL_BASE   = "meta-llama/Meta-Llama-3.1-8B-Instruct"
-MODEL_ID     = "meta-llama/Llama-3.1-8B-Instruct"
-HF_HOME      = "/restricted/projectnb/batmanlab/shawn24/PhD/.hf_cache"
+MODEL_ID     = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+HF_HOME      = "/restricted/projectnb/batmanlab/atang4/data/.hf_cache"
 
 JOBS_DIR     = f"{WORKING_DIR}/jobs"
 DEEPSPEED_PORT = 12438
 
 # view names in the order save_img_embedding / ctchat expect for BU records
-VIEW_ORDER = ["lcc", "lmlo", "rcc", "rmlo"]
+VIEW_ORDER = ["lmlo", "lcc", "rmlo", "rcc"]
 
 # fake path prefix that makes ctchat_validation_llama.py resolve embeddings
 # via its "controls" branch: bu_path/controls/test_images_png/{exam_id}/{view}.png
