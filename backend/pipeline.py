@@ -123,7 +123,8 @@ async def run_pipeline(
         val_results = job_dir / "val_results.json"
         await _run(
             [
-                "deepspeed", "--master_port", str(cfg.DEEPSPEED_PORT),
+                cfg.DEEPSPEED_BIN, "--master_port", str(cfg.DEEPSPEED_PORT),
+
                 "llava/serve/ctchat_validation_llama.py",
                 "--deepspeed", "./zero3.json",
                 "--model-path", cfg.CHECKPOINT_DIR,
@@ -135,6 +136,13 @@ async def run_pipeline(
             job_id,
             log_dir / "stage1.log",
             cwd=cfg.LLAVA_SRC,
+            env={
+                "HF_HOME": cfg.HF_HOME,
+                "TRANSFORMERS_OFFLINE": "1",
+                "HF_DATASETS_OFFLINE": "1",
+                "TOKENIZERS_PARALLELISM": "false",
+                "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
+            },
         )
 
         # ── Step 6: JSON → CSV bridge ─────────────────────────────────────────
