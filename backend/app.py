@@ -15,7 +15,6 @@ cfg.verify_paths()
 app = FastAPI(title="MammoFM")
 
 FRONTEND_DIR = Path(cfg.REPO_DIR) / "frontend"
-app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
 
 
 @app.post("/api/run")
@@ -67,3 +66,7 @@ async def api_results(job_id: str):
     if job["status"] != "done":
         raise HTTPException(status_code=409, detail=f"Job status: {job['status']}")
     return pl.read_results(job_id)
+
+
+# Mount static files LAST so API routes take priority
+app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

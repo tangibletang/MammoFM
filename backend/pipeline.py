@@ -85,15 +85,16 @@ async def run_pipeline(
         embed_bu_root = str(job_dir / "embed_bu")
         await _run(
             [
-                "python", cfg.EMBEDDING_SCRIPT,
+                cfg.PYTHON_BIN, cfg.EMBEDDING_SCRIPT,
                 "--mammo-clip-chkpt", cfg.MAMMO_CLIP_CHKPT,
-                "--data_csv", str(img_csv),
+                "--data-csv", str(img_csv),
                 "--bu_path", embed_bu_root,
                 "--inference-mode", "y",
             ],
             job_id,
             log_dir / "encode.log",
             cwd=cfg.LLAVA_SRC,
+            env={"PYTHONPATH": cfg.LLAVA_SRC},
         )
 
         # ── Step 4: build source JSON for ctchat ─────────────────────────────
@@ -142,6 +143,7 @@ async def run_pipeline(
                 "HF_DATASETS_OFFLINE": "1",
                 "TOKENIZERS_PARALLELISM": "false",
                 "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
+                "PYTHONPATH": cfg.LLAVA_SRC,
             },
         )
 
@@ -149,7 +151,7 @@ async def run_pipeline(
         _update(job_id, "converting", "Converting Stage 1 output…")
         intermediate_csv = job_dir / "intermediate.csv"
         bridge_cmd = [
-            "python", cfg.JSON_TO_CSV_SCRIPT,
+            cfg.PYTHON_BIN, cfg.JSON_TO_CSV_SCRIPT,
             "--val-results-json", str(val_results),
             "--output-csv", str(intermediate_csv),
             "--patient-id", patient_id,
@@ -164,7 +166,7 @@ async def run_pipeline(
         final_csv = job_dir / "final.csv"
         await _run(
             [
-                "python", cfg.FINAL_STAGE_SCRIPT,
+                cfg.PYTHON_BIN, cfg.FINAL_STAGE_SCRIPT,
                 "--input-csv", str(intermediate_csv),
                 "--output-csv", str(final_csv),
                 "--model-id", cfg.MODEL_ID,
@@ -176,7 +178,7 @@ async def run_pipeline(
             ],
             job_id,
             log_dir / "stage2.log",
-            env={"HF_HOME": cfg.HF_HOME},
+            env={"HF_HOME": cfg.HF_HOME, "PYTHONPATH": cfg.LLAVA_SRC},
         )
 
         _update(job_id, "done", "Complete")

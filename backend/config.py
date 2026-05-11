@@ -18,6 +18,7 @@ MODEL_ID     = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 HF_HOME      = "/restricted/projectnb/batmanlab/atang4/data/.hf_cache"
 
 JOBS_DIR     = f"{WORKING_DIR}/jobs"
+PYTHON_BIN     = "/restricted/projectnb/batmanlab/shawn24/llava_breast/bin/python3.10"
 DEEPSPEED_BIN  = "/restricted/projectnb/batmanlab/shawn24/llava_breast/bin/deepspeed"
 DEEPSPEED_PORT = 12438
 
