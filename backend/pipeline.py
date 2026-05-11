@@ -173,8 +173,6 @@ async def run_pipeline(
                 "--max-new-tokens", "320",
                 "--temperature", "0.3",
                 "--top-p", "0.9",
-                "--patient-id", patient_id,
-                "--exam-id", exam_id,
             ],
             job_id,
             log_dir / "stage2.log",
