@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# One entrypoint for SCC. Usage: mammofm submit | status | log | tunnel | verify
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DATA="${MAMMOFM_DATA:-/restricted/projectnb/batmanlab/atang4/data}"
+JUMP="${MAMMOFM_JUMP:-atang4@scc1.bu.edu}"
+LOGIN="${MAMMOFM_LOGIN:-atang4@scc4.bu.edu}"
+PY="${MAMMOFM_PYTHON:-/restricted/projectnb/batmanlab/shawn24/llava_breast/bin/python3.10}"
+
+help() {
+  echo "MammoFM — use this instead of remembering paths."
+  echo ""
+  echo "  $0 submit   — qsub the web server (GPU node)"
+  echo "  $0 status  — qstat + last server_info.txt"
+  echo "  $0 log     — tail -f server.log"
+  echo "  $0 tunnel  — print SSH + URL (run the ssh line on your laptop)"
+  echo "  $0 verify  — backend paths + Stage 1 patch hooks (no GPU)"
+  echo ""
+  echo "Stage 1 tests (qsub on SCC):"
+  echo "  qsub $ROOT/scripts/smoke_test_stage1_patch.sh        # full e2e (fp16, recommended)"
+  echo "  qsub $ROOT/scripts/smoke_test_stage1_8bit_load_only.sh # 8-bit load canary only"
+  echo ""
+  echo "After submit: wait for Uvicorn in log, then tunnel on laptop, open URL."
+  echo "Optional: LOCAL_PORT=25002 $0 tunnel   if the default local port is busy."
+}
+
+case "${1:-help}" in
+  submit)
+    qsub "$ROOT/scripts/start_server.sh"
+    echo ""
+    echo "Next:  $0 log       (wait for: Uvicorn running ...)"
+    echo "Then:  $0 tunnel    (copy ssh to laptop)"
+    ;;
+  status)
+    qstat -u "$USER" 2>/dev/null || true
+    echo "---"
+    if [[ -f "$DATA/server_info.txt" ]]; then cat "$DATA/server_info.txt"
+    else echo "No $DATA/server_info.txt yet (job not started or first boot)."
+    fi
+    ;;
+  log)
+    exec tail -f "$DATA/server.log"
+    ;;
+  tunnel)
+    node=""
+    [[ -f "$DATA/server_info.txt" ]] && node=$(grep '^Node:' "$DATA/server_info.txt" | awk '{print $2}' || true)
+    if [[ -z "${node:-}" ]]; then
+      echo "No compute node in server_info.txt — is the job running? Try: $0 submit && $0 log"
+      exit 1
+    fi
+    # Avoid ~/.ssh/config ControlMaster and IDE port grabs; high local port avoids 8000–8002 clashes.
+    lp="${LOCAL_PORT:-25001}"
+    echo "On your LAPTOP (new terminal), leave running:"
+    echo ""
+    echo "  ssh -F /dev/null -S none -o ControlMaster=no -N -J $JUMP -L ${lp}:${node}:8000 $LOGIN"
+    echo ""
+    echo "Browser:  http://127.0.0.1:${lp}"
+    echo "If the node name fails from scc4, use host ${node}.bu.edu in place of ${node} in -L."
+    echo "(Use LOCAL_PORT=25002 $0 tunnel if $lp is busy.)"
+    ;;
+  verify)
+    cd "$ROOT/backend"
+    PYTHONPATH=. "$PY" verify_backend.py
+    PYTHONPATH=. "$PY" verify_sitecustomize_stage1.py
+    ;;
+  help|-h|--help)
+    help
+    ;;
+  *)
+    help
+    exit 1
+    ;;
+esac

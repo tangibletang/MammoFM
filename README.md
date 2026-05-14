@@ -109,7 +109,7 @@ http://localhost:8000
 | Server info (node + tunnel) | `/restricted/projectnb/batmanlab/atang4/data/server_info.txt` |
 | Stage 1 script | `.../src_pos_emb4views_new_loss/llava/serve/ctchat_validation_llama.py` |
 | Stage 2 script | `.../src_pos_emb4views_new_loss/final_stage.py` |
-| Encoding script | `.../src_pos_emb4views_new_loss/llava/model/multimodal_encoder/save_img_embedding.py` |
+| Encoding script | `MammoFM/backend/save_img_embedding_mammofm.py` (patched; do not use upstream `save_img_embedding.py`) |
 
 ---
 

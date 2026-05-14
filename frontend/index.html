@@ -8,37 +8,79 @@
 </head>
 <body>
   <div class="container">
-    <h1>MammoFM</h1>
-    <p class="subtitle">Two-stage mammography report generator</p>
+    <header class="page-header">
+      <h1>MammoFM</h1>
+      <p class="subtitle">Upload the four standard mammogram views to generate a preliminary and reconciled report.</p>
+    </header>
 
-    <form id="reportForm">
-      <div class="row">
-        <label>Patient ID <input type="text" name="patient_id" required /></label>
-        <label>Exam ID    <input type="text" name="exam_id"    required /></label>
-      </div>
+    <div class="disclaimer" role="note">
+      Research preview only. Generated reports are not medical advice and should not be used for diagnosis.
+    </div>
 
-      <fieldset>
-        <legend>Upload 4 views (PNG)</legend>
-        <div class="uploads">
-          <label>LCC  <input type="file" name="lcc"  accept=".png" required /></label>
-          <label>LMLO <input type="file" name="lmlo" accept=".png" required /></label>
-          <label>RCC  <input type="file" name="rcc"  accept=".png" required /></label>
-          <label>RMLO <input type="file" name="rmlo" accept=".png" required /></label>
+    <div class="layout-two-col">
+      <section class="panel">
+        <h2 class="panel-title">Uploads</h2>
+        <p class="upload-help">
+          Filenames should include <code>LCC</code>, <code>LMLO</code>, <code>RCC</code>, or <code>RMLO</code>.
+          Detection runs automatically after upload.
+        </p>
+
+        <div id="dropZone" class="drop-zone" tabindex="0">
+          <p>Drag and drop images here, or <label class="browse-label"><input type="file" id="fileInput" multiple accept="image/*" />browse</label></p>
+          <button type="button" class="btn-secondary" id="refreshDetection">Refresh detection</button>
         </div>
-      </fieldset>
 
-      <div class="optional-csv">
-        <label>
-          Classifier CSV (optional — provides zero-shot findings)
-          <input type="file" name="classifier_csv" accept=".csv" />
+        <div id="previewWarnings" class="preview-warnings hidden"></div>
+
+        <div class="table-wrap">
+          <table class="checklist" id="checklistTable" aria-label="Upload checklist">
+            <thead>
+              <tr><th>View</th><th>Filename</th><th>Status</th></tr>
+            </thead>
+            <tbody id="checklistBody"></tbody>
+          </table>
+        </div>
+
+        <div class="gallery" id="thumbGallery" aria-label="Detected views preview"></div>
+
+        <form id="reportForm">
+          <button type="submit" id="submitBtn" class="btn-primary">Generate report</button>
+        </form>
+      </section>
+
+      <aside class="panel panel-side">
+        <h2 class="panel-title">Options</h2>
+        <label class="field">
+          Patient ID
+          <input type="text" name="patient_id" id="patientId" autocomplete="off" placeholder="Auto if blank" />
         </label>
-      </div>
+        <p class="field-hint">Leave blank to auto-generate (same as Gradio).</p>
+        <label class="field">
+          Exam ID
+          <input type="text" name="exam_id" id="examId" autocomplete="off" placeholder="Auto if blank" />
+        </label>
+        <p class="field-hint">Leave blank to auto-generate (same as Gradio).</p>
 
-      <button type="submit" id="submitBtn">Generate Report</button>
-    </form>
+        <label class="field">
+          Classifier CSV (optional)
+          <input type="file" name="classifier_csv" id="classifierCsv" accept=".csv" />
+        </label>
 
-    <div id="progress" class="hidden">
-      <h2>Progress</h2>
+        <label class="field">
+          Job ID
+          <input type="text" id="jobIdField" readonly placeholder="—" />
+        </label>
+
+        <details class="advanced">
+          <summary>Advanced</summary>
+          <p class="advanced-placeholder">No advanced settings yet. Pipeline configuration is loaded from <code>backend/config.py</code>.</p>
+        </details>
+      </aside>
+    </div>
+
+    <div id="progress" class="panel hidden">
+      <h2 class="panel-title">Progress</h2>
+      <progress id="jobProgress" max="1" value="0"></progress>
       <div class="steps">
         <div class="step" id="step-encoding">Image encoding</div>
         <div class="step" id="step-stage1">Stage 1 — LLaVA</div>
@@ -50,11 +92,17 @@
 
     <div id="results" class="hidden">
       <div class="report-box">
-        <h2>Preliminary Report <span class="tag">Stage 1</span></h2>
+        <div class="report-header">
+          <h2>Preliminary report <span class="tag">Stage 1</span></h2>
+          <button type="button" class="btn-copy" data-copy-target="prelimReport">Copy</button>
+        </div>
         <pre id="prelimReport"></pre>
       </div>
       <div class="report-box">
-        <h2>Final Report <span class="tag">Stage 2</span></h2>
+        <div class="report-header">
+          <h2>Final report <span class="tag">Stage 2</span></h2>
+          <button type="button" class="btn-copy" data-copy-target="finalReport">Copy</button>
+        </div>
         <pre id="finalReport"></pre>
       </div>
     </div>

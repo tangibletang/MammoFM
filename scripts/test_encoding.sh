@@ -21,8 +21,12 @@ export TRITON_CACHE_DIR=/restricted/projectnb/batmanlab/atang4/data/.triton
 
 PYTHON=/restricted/projectnb/batmanlab/shawn24/llava_breast/bin/python3.10
 LLAVA_SRC=/restricted/projectnb/batmanlab/shawn24/PhD/LLaVa-Breast-scc/LLaVa-Breast/src_pos_emb4views_new_loss
+BACKEND=/restricted/projectnb/batmanlab/atang4/MammoFM/backend
+ENCODER=$BACKEND/save_img_embedding_mammofm.py
 JOB=/restricted/projectnb/batmanlab/atang4/data/jobs/test_encode
 EXAM=test_exam
+
+$PYTHON $BACKEND/verify_backend.py || exit 1
 
 mkdir -p $JOB/embed_bu/controls/test_images_png/$EXAM
 
@@ -43,9 +47,10 @@ BU,/restricted/projectnb/pixel/hariri/MGdata_for_mirai/png/controls/test_exam/RC
 EOF
 echo "CSV built"
 
-# Run encoding
+# Run encoding (cwd matches pipeline.py so relative imports behave the same)
 echo "=== Running encoding ==="
-$PYTHON $LLAVA_SRC/llava/model/multimodal_encoder/save_img_embedding.py \
+cd "$LLAVA_SRC"
+$PYTHON "$ENCODER" \
     --mammo-clip-chkpt /restricted/projectnb/batmanlab/shawn24/PhD/Breast-CLIP/src/codebase/outputs/mayo/MammoCLIP-MayoClinic-epoch4.tar \
     --data-csv $JOB/images.csv \
     --bu_path $JOB/embed_bu \
