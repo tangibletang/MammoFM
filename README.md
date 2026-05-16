@@ -7,14 +7,48 @@ A locally-hosted web UI that takes 4 mammogram PNGs, runs a two-stage AI pipelin
 ```
 User uploads LCC, LMLO, RCC, RMLO PNGs
         ↓
-[Stage 0] Image Encoding (Mammo-CLIP / EfficientNet-B5)
+[Stage 0] Image encoding (Mammo-CLIP / EfficientNet-B5)
         ↓
-[Stage 1] LLaVA Inference via DeepSpeed → Preliminary Report
+[Stage 1] LLaVA + Llama-3.1-8B (Hugging Face `generate`, optional 8-bit base) → preliminary report
         ↓
-[Stage 2] LLaMA-3.1-8B Reconciliation → Final Report
+[Stage 2] LLaMA-3.1-8B reconciliation (`final_stage.py`) → final report
 ```
 
-All model weights and scripts live in Shawn's directories and are called read-only as subprocesses.
+Model weights and upstream LLaVA code live in shared lab paths; this repo wires FastAPI, job orchestration, HF cache resolution, and small launcher patches around those subprocesses.
+
+---
+
+## Why Stage 1 defaults to 8-bit (bitsandbytes)
+
+**Practical scheduling, not a claim that 8-bit is “more accurate.”**
+
+- **Many older / smaller GPU nodes** do not reliably run full **fp16** LLaVA + a **7–8B** Llama backbone for multimodal generation: you can hit **OOM**, or PyTorch attention/back-end paths that error on some architectures (we disable a few brittle SDPA modes in the job environment).
+- **Large-VRM nodes (e.g. A100-class)** are attractive for **fp16 Stage 1**, but on SCC they are often **heavily subscribed**, so waiting for them slows everyone down.
+- **8-bit weights** for the **language-model backbone** (via bitsandbytes) cut **weight memory** sharply so Stage 1 fits **the GPUs we actually get** under the default `qsub` resource request, while vision/projector paths stay in higher precision as wired in the stack (plus small runtime patches under `backend/patch_site/`).
+
+To force **fp16 Stage 1** when you have enough VRAM:
+
+```bash
+qsub -v MAMMOFM_STAGE1_LOAD_8BIT=0 /restricted/projectnb/batmanlab/atang4/MammoFM/scripts/start_server.sh
+```
+
+(or set the same variable in your environment before `mammofm submit` / `start_server.sh`.)
+
+### Do 8-bit and fp16 reports differ? How?
+
+**They are not numerically identical**, but **free-text reports are often very hard to tell apart** in practice.
+
+| Aspect | fp16 Stage 1 | 8-bit Stage 1 (default) |
+|--------|----------------|-------------------------|
+| Weights | fp16 tensors | int8 (+ scales) in quantized linear layers |
+| Math | standard matmul | quantized matmul approximations |
+| Decoding | argmax / sampling from logits | same API, logits differ slightly |
+
+**Mechanically:** quantization changes hidden states and therefore **logits over the vocabulary**. With **greedy** or **low-temperature** decoding, the **argmax token is often unchanged** for many steps; when two tokens are **close in logit space**, a small shift can **flip** the winner → **local wording** changes, occasionally a different phrase for the same imaging finding.
+
+**What we do *not* see systematically:** a consistent “8-bit always understates malignancy”-style bias has **not** been characterized here; overlap with fp16 is **high** for normal screening-style prose. If you need **strict reproducibility** (e.g. matching a published fp16 eval), run **fp16 Stage 1** on hardware that can hold it.
+
+Stage 2 (final report) is a **separate** Llama pass over Stage 1 text + structured fields; it is **not** the 8-bit vs fp16 comparator for the *whole* product, but it will reflect whatever wording Stage 1 produced.
 
 ---
 
@@ -43,44 +77,77 @@ ln -sf /restricted/projectnb/batmanlab/shawn24/PhD/.hf_cache/models/models--meta
     simsimd opencv-python-headless "numpy<2" omegaconf
 ```
 
+Optional sanity check (login node, no GPU):
+
+```bash
+cd /restricted/projectnb/batmanlab/atang4/MammoFM && ./scripts/mammofm verify
+```
+
 ---
 
-## Starting the Server
+## Running the web UI (SCC)
 
-The server requires a GPU node. Submit it as a batch job:
+### 1. Submit the server job
+
+From an SCC login node (e.g. `scc4`):
+
+```bash
+cd /restricted/projectnb/batmanlab/atang4/MammoFM
+./scripts/mammofm submit
+```
+
+Equivalent:
 
 ```bash
 qsub /restricted/projectnb/batmanlab/atang4/MammoFM/scripts/start_server.sh
 ```
 
-Once the job starts, the node hostname and SSH tunnel command are written to:
-```
-/restricted/projectnb/batmanlab/atang4/data/server_info.txt
-```
+### 2. Wait until the job is actually running
 
-Check it with:
+Poll the queue until your job leaves `qw` and shows state **`r`** (running):
+
 ```bash
-cat /restricted/projectnb/batmanlab/atang4/data/server_info.txt
+./scripts/mammofm status
+# or
+qstat -u "$USER"
 ```
 
-The server runs for 8 hours. Resubmit when needed.
+`start_server.sh` writes **`server_info.txt` on the shared filesystem** as soon as the job starts on a compute node, so you do **not** need to tail logs for routine use.
+
+### 3. Get the SSH tunnel command (on SCC)
+
+```bash
+./scripts/mammofm tunnel
+```
+
+This prints a one-line `ssh ... -L ...:NODE:8000 ...` command and the **local URL** (default local port `25001`; override with `LOCAL_PORT=25002 ./scripts/mammofm tunnel` if busy).
+
+If `tunnel` says `server_info.txt` is missing, the job has not started yet — go back to **step 2**.
+
+### 4. Open the tunnel on your laptop
+
+Paste and run the printed `ssh` command in a **terminal on your laptop** (not on SCC). Leave it open.
+
+Then open the printed URL in your **laptop** browser, e.g. `http://127.0.0.1:25001` .
+
+### 5. Optional troubleshooting
+
+- **Server log (debug only):** `/restricted/projectnb/batmanlab/atang4/data/server.log`
+- **Per-upload job logs:** `/restricted/projectnb/batmanlab/atang4/data/jobs/{job_id}/logs/` (`encode.log`, `stage1.log`, `stage2.log`, …)
+
+The batch job runs up to **8 hours** (`h_rt=8:00:00`). Resubmit when it expires.
 
 ---
 
-## Connecting from Your Laptop
+## Connecting from Your Laptop (manual SSH, if you prefer)
 
-**From your local machine**, open a new terminal and run the SSH tunnel using a jump host:
+If you already know the compute node name (from `server_info.txt` or `mammofm status`):
 
 ```bash
-ssh -J atang4@scc1.bu.edu -L 8000:scc-307:8000 atang4@scc4.bu.edu
+ssh -J YOUR_USER@scc1.bu.edu -L 8000:NODE_NAME:8000 YOUR_USER@scc4.bu.edu
 ```
 
-Replace `scc-307` with the node name shown in `server_info.txt`. Keep this terminal open.
-
-Then open your browser at:
-```
-http://localhost:8000
-```
+Then browse to `http://localhost:8000` (or match the local port you chose). The `mammofm tunnel` command avoids hunting for hostnames and uses a high local port to reduce collisions.
 
 ---
 
@@ -92,48 +159,54 @@ http://localhost:8000
    - **LMLO** — Left Mediolateral Oblique
    - **RCC** — Right Craniocaudal
    - **RMLO** — Right Mediolateral Oblique
-3. Optionally upload a **Classifier CSV** with `zero_shot_per_image` column (provides mass/asymmetry/calcification predictions to Stage 2)
+3. Optionally upload a **Classifier CSV** with `zero_shot_per_image` column (mass/asymmetry/calcification hints for Stage 2)
 4. Click **Generate Report**
-5. Wait ~5–10 minutes for encoding + Stage 1 + Stage 2 to complete
-6. Preliminary and Final reports appear side by side
+5. Wait on the order of **~5–10 minutes** for encoding + Stage 1 + Stage 2 (varies with GPU load and token length)
+6. Preliminary and final reports appear side by side
 
 ---
 
 ## Key Paths
 
 | Resource | Path |
-|---|---|
+|----------|------|
 | Checkpoint (unzipped) | `/restricted/projectnb/batmanlab/atang4/data/checkpoints_v1_bu_ve_old_loss/` |
 | Job outputs | `/restricted/projectnb/batmanlab/atang4/data/jobs/{job_id}/` |
 | Server log | `/restricted/projectnb/batmanlab/atang4/data/server.log` |
-| Server info (node + tunnel) | `/restricted/projectnb/batmanlab/atang4/data/server_info.txt` |
+| Server info (node + tunnel hints) | `/restricted/projectnb/batmanlab/atang4/data/server_info.txt` |
 | Stage 1 script | `.../src_pos_emb4views_new_loss/llava/serve/ctchat_validation_llama.py` |
 | Stage 2 script | `.../src_pos_emb4views_new_loss/final_stage.py` |
 | Encoding script | `MammoFM/backend/save_img_embedding_mammofm.py` (patched; do not use upstream `save_img_embedding.py`) |
 
 ---
 
-## Validation Scripts
+## Validation / smoke tests (`qsub`)
+
+Artifacts under `/restricted/projectnb/batmanlab/atang4/data/validation/` unless noted.
 
 ```bash
-# Test Stage 2 only (no GPU queue wait — runs on GPU node via qsub)
+# Full pipeline: encode → Stage 1 → Stage 2 (blocking until job finishes if you pass -sync y)
+qsub -sync y /restricted/projectnb/batmanlab/atang4/MammoFM/scripts/smoke_e2e_full_pipeline.sh
+
+# Stage 1 only (8-bit by default; fp16: -v SMOKE_LOAD_8BIT=0)
+qsub /restricted/projectnb/batmanlab/atang4/MammoFM/scripts/smoke_test_stage1_patch.sh
+
+# Stage 2 only
 qsub scripts/test_stage2.sh
 
-# Test Stage 1 (deepspeed inference)
+# Stage 1 harness (older comparison script)
 qsub scripts/test_stage1.sh
 
-# Test image encoding
+# Image encoding only
 qsub scripts/test_encoding.sh
 ```
-
-Results saved to `/restricted/projectnb/batmanlab/atang4/data/validation/`.
 
 ---
 
 ## Notes
 
-- **View order** must be LMLO, LCC, RMLO, RCC (confirmed from existing BU records)
-- **MammoCLIP checkpoint**: using `epoch4.tar` — if reports seem wrong, try epoch3
-- **DeepSpeed**: required for Stage 1 even for single-patient inference
-- **LLaMA weights**: cached at `/restricted/projectnb/batmanlab/shawn24/PhD/.hf_cache/` — no download needed
-- The server job runs for 8 hours max (SGE `h_rt=8:00:00`). Resubmit if it expires.
+- **View order** must be LMLO, LCC, RMLO, RCC (matches BU records consumed by the encoder)
+- **MammoCLIP checkpoint**: `epoch4.tar` by default — if reports look off, epoch3 is the next thing to try
+- **Llama offline cache**: gated Hub IDs are resolved to local snapshots (`backend/config.py`); node-local `HF_HOME` can be empty before rsync, with fallback to the project cache
+- **CPU Stage 1** (slow, reliable if GPU path fails): `MAMMOFM_STAGE1_CPU_GENERATE=1` — see `scripts/STAGE1_CPU_FALLBACK.md`
+- **DeepSpeed**: not what the interactive FastAPI path relies on for single-job `generate`; earlier docs mentioning “DeepSpeed for Stage 1” referred to the historical training / cluster layout, not a laptop requirement for this UI

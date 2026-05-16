@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One entrypoint for SCC. Usage: mammofm submit | submit-cpu | status | log | tunnel | verify
+# One entrypoint for SCC. Usage: mammofm submit | submit-cpu | status | tunnel | verify | log (optional)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,9 +16,9 @@ help() {
   echo "                    Optional: MAMMOFM_STAGE1_MAX_NEW_TOKENS=64 $0 submit-cpu"
   echo "                    8/4-bit Stage 1 stays on GPU (incompatible with CPU merge path)."
   echo "                    Reference: $ROOT/scripts/STAGE1_CPU_FALLBACK.md"
-  echo "  $0 status  — qstat + last server_info.txt"
-  echo "  $0 log     — tail -f server.log"
+  echo "  $0 status  — qstat + last server_info.txt (wait until job state is r / running)"
   echo "  $0 tunnel  — print SSH + URL (run the ssh line on your laptop)"
+  echo "  $0 log     — optional: tail -f server.log (debug only)"
   echo "  $0 verify  — backend paths + Stage 1 patch hooks + Llama offline cache (no GPU)"
   echo "               (set MAMMOFM_SKIP_LLAMA_CACHE_CHECK=1 on login nodes without hub snapshot)"
   echo ""
@@ -27,8 +27,8 @@ help() {
   echo "  qsub -v SMOKE_CPU_STAGE1=1 $ROOT/scripts/smoke_test_stage1_patch.sh   # CPU Stage 1 (slow, reliable)"
   echo "  qsub $ROOT/scripts/smoke_test_stage1_8bit_load_only.sh # 8-bit load canary only"
   echo ""
-  echo "After submit: wait for Uvicorn in log, run ./scripts/mammofm tunnel ONCE on scc4 to print the ssh line,"
-  echo "then run that ssh command on your **Mac** (leave it open) and open the URL in the Mac browser — not on SCC."
+  echo "After submit: ./scripts/mammofm status until your job is running, then ./scripts/mammofm tunnel,"
+  echo "run the printed ssh on your **laptop** (leave it open), open the URL — not on SCC."
   echo "Optional: LOCAL_PORT=25002 $0 tunnel   if the default local port is busy."
 }
 
@@ -36,8 +36,8 @@ case "${1:-help}" in
   submit)
     qsub "$ROOT/scripts/start_server.sh"
     echo ""
-    echo "Next:  $0 log       (wait for: Uvicorn running ...)"
-    echo "Then:  $0 tunnel    (copy ssh to laptop)"
+    echo "Next:  $0 status   (repeat until qstat shows state r)"
+    echo "Then:  $0 tunnel  (copy ssh to laptop)"
     ;;
   submit-cpu)
     _v="MAMMOFM_STAGE1_CPU_GENERATE=1"
@@ -46,8 +46,8 @@ case "${1:-help}" in
     fi
     qsub -v "$_v" "$ROOT/scripts/start_server.sh"
     echo ""
-    echo "Next:  $0 log       (banner should show STAGE1_CPU=1)"
-    echo "Then:  $0 tunnel    (copy ssh to laptop)"
+    echo "Next:  $0 status   (repeat until qstat shows state r)"
+    echo "Then:  $0 tunnel  (copy ssh to laptop)"
     ;;
   status)
     qstat -u "$USER" 2>/dev/null || true
@@ -63,7 +63,7 @@ case "${1:-help}" in
     node=""
     [[ -f "$DATA/server_info.txt" ]] && node=$(grep '^Node:' "$DATA/server_info.txt" | awk '{print $2}' || true)
     if [[ -z "${node:-}" ]]; then
-      echo "No compute node in server_info.txt — is the job running? Try: $0 submit && $0 log"
+      echo "No compute node in server_info.txt — job may still be queued. Try: $0 status"
       exit 1
     fi
     # Avoid ~/.ssh/config ControlMaster and IDE port grabs; high local port avoids 8000–8002 clashes.
