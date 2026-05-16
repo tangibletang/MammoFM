@@ -38,12 +38,19 @@ async def api_preview(files: Optional[List[UploadFile]] = File(default=None)):
     }
 
 
+def _optional_form_bool(raw: Optional[str]) -> Optional[bool]:
+    if raw is None or str(raw).strip() == "":
+        return None
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
 @app.post("/api/run")
 async def api_run(
     files: List[UploadFile] = File(...),
     patient_id: Optional[str] = Form(default=None),
     exam_id: Optional[str] = Form(default=None),
     classifier_csv: Optional[UploadFile] = File(None),
+    use_cpu_stage1: Optional[str] = Form(default=None),
 ):
     if not files or len(files) < 1:
         raise HTTPException(status_code=400, detail="Upload at least one image.")
@@ -96,7 +103,16 @@ async def api_run(
         pl.mark_job_failed(job_id, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    asyncio.create_task(pl.run_pipeline(job_id, patient, exam, image_paths, cls_path))
+    asyncio.create_task(
+        pl.run_pipeline(
+            job_id,
+            patient,
+            exam,
+            image_paths,
+            cls_path,
+            stage1_cpu_override=_optional_form_bool(use_cpu_stage1),
+        )
+    )
     return {"job_id": job_id, "patient_id": patient, "exam_id": exam, "warnings": warnings}
 
 

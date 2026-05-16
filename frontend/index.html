@@ -4,90 +4,137 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MammoFM — Mammography Report Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="container">
     <header class="page-header">
+      <p class="eyebrow">Research preview</p>
       <h1>MammoFM</h1>
-      <p class="subtitle">Upload the four standard mammogram views to generate a preliminary and reconciled report.</p>
+      <p class="subtitle">
+        Upload four screening views. The model produces a preliminary report (Stage&nbsp;1) and a reconciled final report (Stage&nbsp;2).
+      </p>
     </header>
 
     <div class="disclaimer" role="note">
-      Research preview only. Generated reports are not medical advice and should not be used for diagnosis.
+      <strong>Disclaimer.</strong> Output is not medical advice and must not be used for diagnosis or treatment decisions.
     </div>
 
-    <div class="layout-two-col">
-      <section class="panel">
-        <h2 class="panel-title">Uploads</h2>
-        <p class="upload-help">
-          Filenames should include <code>LCC</code>, <code>LMLO</code>, <code>RCC</code>, or <code>RMLO</code>.
-          Detection runs automatically after upload.
+    <main class="panel panel-hero">
+      <h2 class="panel-title">Upload images</h2>
+
+      <div class="detection-callout" role="region" aria-label="How view detection works">
+        <h3 class="callout-title">Automatic view detection</h3>
+        <p>
+          Each filename is scanned for standard view tokens: <code>LCC</code>, <code>LMLO</code>, <code>RCC</code>, and <code>RMLO</code>
+          (case-insensitive). Matching files are assigned to that view. All four views must be detected before you can run the pipeline.
         </p>
+        <p class="callout-sub">
+          After you add or change files, use <strong>Re-run view detection</strong> below to refresh the checklist and thumbnails.
+        </p>
+      </div>
 
-        <div id="dropZone" class="drop-zone" tabindex="0">
-          <p>Drag and drop images here, or <label class="browse-label"><input type="file" id="fileInput" multiple accept="image/*" />browse</label></p>
-          <button type="button" class="btn-secondary" id="refreshDetection">Refresh detection</button>
+      <div
+        id="dropZone"
+        class="drop-zone"
+        tabindex="0"
+        role="button"
+        aria-label="Drop mammogram images here or browse"
+      >
+        <div class="drop-zone-inner">
+          <svg class="drop-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M12 16V8m0 0l-3 3m3-3l3 3M4 17h16" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 17l2.5-6.5a2 2 0 012-1.5h7a2 2 0 012 1.5L20 17" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <p class="drop-primary">Drop PNG or JPEG files here</p>
+          <p class="drop-hint">or</p>
+          <label class="btn-ghost">
+            <input type="file" id="fileInput" multiple accept="image/*" />
+            Choose files
+          </label>
         </div>
+      </div>
 
-        <div id="previewWarnings" class="preview-warnings hidden"></div>
+      <div class="detection-actions">
+        <button type="button" class="btn-secondary" id="refreshDetection">Re-run view detection</button>
+        <p class="detection-actions-hint">Use after replacing files so the mapping and previews stay in sync.</p>
+      </div>
 
-        <div class="table-wrap">
-          <table class="checklist" id="checklistTable" aria-label="Upload checklist">
-            <thead>
-              <tr><th>View</th><th>Filename</th><th>Status</th></tr>
-            </thead>
-            <tbody id="checklistBody"></tbody>
-          </table>
-        </div>
+      <div id="previewWarnings" class="preview-warnings hidden"></div>
 
-        <div class="gallery" id="thumbGallery" aria-label="Detected views preview"></div>
+      <div class="table-wrap">
+        <table class="checklist" id="checklistTable" aria-label="View assignment checklist">
+          <thead>
+            <tr><th>View</th><th>Filename</th><th>Status</th></tr>
+          </thead>
+          <tbody id="checklistBody"></tbody>
+        </table>
+      </div>
 
-        <form id="reportForm">
+      <div class="gallery" id="thumbGallery" aria-label="Detected views preview"></div>
+
+      <form id="reportForm" class="run-form">
+        <div class="run-actions">
           <button type="submit" id="submitBtn" class="btn-primary">Generate report</button>
-        </form>
-      </section>
-
-      <aside class="panel panel-side">
-        <h2 class="panel-title">Options</h2>
-        <label class="field">
-          Patient ID
-          <input type="text" name="patient_id" id="patientId" autocomplete="off" placeholder="Auto if blank" />
-        </label>
-        <p class="field-hint">Leave blank to auto-generate (same as Gradio).</p>
-        <label class="field">
-          Exam ID
-          <input type="text" name="exam_id" id="examId" autocomplete="off" placeholder="Auto if blank" />
-        </label>
-        <p class="field-hint">Leave blank to auto-generate (same as Gradio).</p>
-
-        <label class="field">
-          Classifier CSV (optional)
-          <input type="file" name="classifier_csv" id="classifierCsv" accept=".csv" />
-        </label>
-
-        <label class="field">
-          Job ID
-          <input type="text" id="jobIdField" readonly placeholder="—" />
-        </label>
+          <p class="run-actions-sub">Uses GPU for Stage&nbsp;1 (default: 8-bit LLM weights on GPU to fit 16&nbsp;GB cards; wording may differ slightly from full fp16). Usually fastest.</p>
+          <button type="button" id="submitCpuBtn" class="btn-cpu">
+            Generate on CPU <span class="btn-cpu-badge">slower</span>
+          </button>
+          <p class="run-actions-hint-cpu">
+            Stage&nbsp;1 (LLaVA) runs on the CPU with <strong>full fp16</strong> weights (no 8-bit) — closest to the standard precision path, but expect <strong>several minutes</strong> per case. You are less likely to hit GPU memory errors on decode. Mammo-CLIP encoding and Stage&nbsp;2 still use the GPU when available.
+          </p>
+        </div>
 
         <details class="advanced">
-          <summary>Advanced</summary>
-          <p class="advanced-placeholder">No advanced settings yet. Pipeline configuration is loaded from <code>backend/config.py</code>.</p>
+          <summary>Advanced options</summary>
+          <div class="advanced-body">
+            <p class="advanced-lead">
+              Defaults match single-patient runs: patient and exam IDs are generated if left blank. Stage&nbsp;2 still uses the GPU when available.
+            </p>
+            <label class="field">
+              Patient ID
+              <input type="text" name="patient_id" id="patientId" autocomplete="off" placeholder="Auto if blank" />
+            </label>
+            <label class="field">
+              Exam ID
+              <input type="text" name="exam_id" id="examId" autocomplete="off" placeholder="Auto if blank" />
+            </label>
+            <label class="field">
+              Classifier CSV (optional)
+              <input type="file" name="classifier_csv" id="classifierCsv" accept=".csv" />
+            </label>
+            <label class="field checkbox-field">
+              <input type="checkbox" name="use_cpu_stage1" id="useCpuStage1" value="1" />
+              <span>Run Stage&nbsp;1 (LLaVA) on <strong>CPU</strong></span>
+            </label>
+            <p class="field-hint">
+              Slower; uses <strong>full fp16</strong> Stage&nbsp;1 on CPU (8-bit GPU load is turned off for this run). Does not move Mammo-CLIP encoding or Stage&nbsp;2 off the GPU.
+            </p>
+            <label class="field">
+              Job ID
+              <input type="text" id="jobIdField" readonly placeholder="Assigned after run" class="input-mono" />
+            </label>
+          </div>
         </details>
-      </aside>
-    </div>
+      </form>
+    </main>
 
     <div id="progress" class="panel hidden">
       <h2 class="panel-title">Progress</h2>
       <progress id="jobProgress" max="1" value="0"></progress>
+      <p class="elapsed-row" aria-live="polite">
+        Elapsed: <span id="elapsedTime" class="elapsed-digits">—</span>
+      </p>
       <div class="steps">
         <div class="step" id="step-encoding">Image encoding</div>
         <div class="step" id="step-stage1">Stage 1 — LLaVA</div>
         <div class="step" id="step-converting">Converting</div>
         <div class="step" id="step-stage2">Stage 2 — LLaMA</div>
       </div>
-      <p id="statusMsg"></p>
+      <p id="statusMsg" class="status-msg"></p>
     </div>
 
     <div id="results" class="hidden">

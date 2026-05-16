@@ -26,9 +26,15 @@ export HF_DATASETS_OFFLINE=1
 PYTHON=/restricted/projectnb/batmanlab/shawn24/llava_breast/bin/python3.10
 DEEPSPEED=/restricted/projectnb/batmanlab/shawn24/llava_breast/bin/deepspeed
 LLAVA_SRC=/restricted/projectnb/batmanlab/shawn24/PhD/LLaVa-Breast-scc/LLaVa-Breast/src_pos_emb4views_new_loss
+BACKEND=/restricted/projectnb/batmanlab/atang4/MammoFM/backend
 CHECKPOINT=/restricted/projectnb/batmanlab/atang4/data/checkpoints_v1_bu_ve_old_loss/llava-llama3.1_8B_breast_clip-finetune_512-lora/checkpoint-5500
 JOBS=/restricted/projectnb/batmanlab/atang4/data/jobs
 VAL_BASELINE=/restricted/projectnb/batmanlab/atang4/data/checkpoints_v1_bu_ve_old_loss/llava-llama3.1_8B_breast_clip-finetune_512-lora/checkpoint-5500/val_results.json
+
+MODEL_BASE_LOCAL=$("$PYTHON" "$BACKEND/config.py") || {
+  echo "ERROR: Llama snapshot not under HF_HOME=$HF_HOME"
+  exit 1
+}
 
 cd $LLAVA_SRC
 export PYTHONPATH=$(pwd)
@@ -41,7 +47,7 @@ for EXAM in E172868 E172906 E172907; do
     $DEEPSPEED --master_port 12438 llava/serve/ctchat_validation_llama.py \
         --deepspeed ./zero3.json \
         --model-path $CHECKPOINT \
-        --model-base meta-llama/Meta-Llama-3.1-8B-Instruct \
+        --model-base $MODEL_BASE_LOCAL \
         --source_json $JOB_DIR/source.json \
         --bu_path $JOB_DIR/embed_bu \
         --out-path $JOB_DIR/val_results.json

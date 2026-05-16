@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One entrypoint for SCC. Usage: mammofm submit | status | log | tunnel | verify
+# One entrypoint for SCC. Usage: mammofm submit | submit-cpu | status | log | tunnel | verify
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,17 +11,24 @@ PY="${MAMMOFM_PYTHON:-/restricted/projectnb/batmanlab/shawn24/llava_breast/bin/p
 help() {
   echo "MammoFM — use this instead of remembering paths."
   echo ""
-  echo "  $0 submit   — qsub the web server (GPU node)"
+  echo "  $0 submit      — qsub web server; Stage 1 on GPU (default in start_server.sh)"
+  echo "  $0 submit-cpu  — same, but Stage 1 decode on CPU (slow; reliable if GPU OOM)."
+  echo "                    Optional: MAMMOFM_STAGE1_MAX_NEW_TOKENS=64 $0 submit-cpu"
+  echo "                    8/4-bit Stage 1 stays on GPU (incompatible with CPU merge path)."
+  echo "                    Reference: $ROOT/scripts/STAGE1_CPU_FALLBACK.md"
   echo "  $0 status  — qstat + last server_info.txt"
   echo "  $0 log     — tail -f server.log"
   echo "  $0 tunnel  — print SSH + URL (run the ssh line on your laptop)"
-  echo "  $0 verify  — backend paths + Stage 1 patch hooks (no GPU)"
+  echo "  $0 verify  — backend paths + Stage 1 patch hooks + Llama offline cache (no GPU)"
+  echo "               (set MAMMOFM_SKIP_LLAMA_CACHE_CHECK=1 on login nodes without hub snapshot)"
   echo ""
   echo "Stage 1 tests (qsub on SCC):"
-  echo "  qsub $ROOT/scripts/smoke_test_stage1_patch.sh        # full e2e (fp16, recommended)"
+  echo "  qsub $ROOT/scripts/smoke_test_stage1_patch.sh   # e2e, GPU Stage 1 by default (may OOM on 16GB)"
+  echo "  qsub -v SMOKE_CPU_STAGE1=1 $ROOT/scripts/smoke_test_stage1_patch.sh   # CPU Stage 1 (slow, reliable)"
   echo "  qsub $ROOT/scripts/smoke_test_stage1_8bit_load_only.sh # 8-bit load canary only"
   echo ""
-  echo "After submit: wait for Uvicorn in log, then tunnel on laptop, open URL."
+  echo "After submit: wait for Uvicorn in log, run ./scripts/mammofm tunnel ONCE on scc4 to print the ssh line,"
+  echo "then run that ssh command on your **Mac** (leave it open) and open the URL in the Mac browser — not on SCC."
   echo "Optional: LOCAL_PORT=25002 $0 tunnel   if the default local port is busy."
 }
 
@@ -30,6 +37,16 @@ case "${1:-help}" in
     qsub "$ROOT/scripts/start_server.sh"
     echo ""
     echo "Next:  $0 log       (wait for: Uvicorn running ...)"
+    echo "Then:  $0 tunnel    (copy ssh to laptop)"
+    ;;
+  submit-cpu)
+    _v="MAMMOFM_STAGE1_CPU_GENERATE=1"
+    if [[ -n "${MAMMOFM_STAGE1_MAX_NEW_TOKENS:-}" ]]; then
+      _v="${_v},MAMMOFM_STAGE1_MAX_NEW_TOKENS=${MAMMOFM_STAGE1_MAX_NEW_TOKENS}"
+    fi
+    qsub -v "$_v" "$ROOT/scripts/start_server.sh"
+    echo ""
+    echo "Next:  $0 log       (banner should show STAGE1_CPU=1)"
     echo "Then:  $0 tunnel    (copy ssh to laptop)"
     ;;
   status)

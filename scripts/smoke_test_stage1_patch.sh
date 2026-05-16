@@ -6,10 +6,18 @@
 #$ -o /restricted/projectnb/batmanlab/atang4/data/validation/smoke_stage1_patch.log
 #$ -j y
 #
-# fp16 load + on-GPU generation (matches production default). For OOM debugging add here:
-#   export MAMMOFM_CPU_GENERATE=1
-# or for the FastAPI server set MAMMOFM_STAGE1_CPU_GENERATE=1 in start_server.sh.
-# 8-bit load canary: qsub .../smoke_test_stage1_8bit_load_only.sh
+# Default: GPU Stage 1 with 8-bit LLM (matches start_server.sh / pipeline when MAMMOFM_STAGE1_LOAD_8BIT=1).
+#   qsub -v SMOKE_LOAD_8BIT=0            # fp16 path
+#   qsub -v SMOKE_CPU_STAGE1=1           # CPU decode (forces fp16 load, no 8-bit)
+#   qsub -v SMOKE_MAX_NEW_TOKENS=256
+SMOKE_CPU_STAGE1="${SMOKE_CPU_STAGE1:-0}"
+SMOKE_MAX_NEW_TOKENS="${SMOKE_MAX_NEW_TOKENS:-128}"
+if [[ "$SMOKE_CPU_STAGE1" == "1" ]]; then
+  SMOKE_LOAD_8BIT=0
+else
+  SMOKE_LOAD_8BIT="${SMOKE_LOAD_8BIT:-${MAMMOFM_STAGE1_LOAD_8BIT:-1}}"
+fi
+echo "SMOKE_CPU_STAGE1=$SMOKE_CPU_STAGE1  SMOKE_LOAD_8BIT=$SMOKE_LOAD_8BIT  SMOKE_MAX_NEW_TOKENS=$SMOKE_MAX_NEW_TOKENS"
 
 set -eo pipefail
 mkdir -p /restricted/projectnb/batmanlab/atang4/data/validation/smoke_stage1_patch
@@ -28,16 +36,25 @@ export TRITON_CACHE_DIR=/restricted/projectnb/batmanlab/atang4/data/.triton
 export HF_HOME=/restricted/projectnb/batmanlab/atang4/data/.hf_cache
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
-export MAMMOFM_CPU_GENERATE=0
-export MAMMOFM_NO_KV_CACHE=1
+export MAMMOFM_CPU_GENERATE="$SMOKE_CPU_STAGE1"
+if [[ "$SMOKE_LOAD_8BIT" == "1" || "$SMOKE_LOAD_8BIT" == "true" || "$SMOKE_LOAD_8BIT" == "yes" ]]; then
+  export MAMMOFM_SKIP_CPU_BEFORE_LORA_MERGE=1
+fi
+# Match production: leave MAMMOFM_NO_KV_CACHE unset (HF incremental decode). Set =1 only to debug.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-# Memory-efficient scaled dot-product attention (when model uses SDPA)
-export PYTORCH_ENABLE_MEM_EFFICIENT_SDPA=1
+# Avoid CUTLASS SDPA backend issues on V100-class GPUs (see pipeline Stage 1/2 env).
+export PYTORCH_ENABLE_MEM_EFFICIENT_SDPA=0
 
 PYTHON=/restricted/projectnb/batmanlab/shawn24/llava_breast/bin/python3.10
 LLAVA_SRC=/restricted/projectnb/batmanlab/shawn24/PhD/LLaVa-Breast-scc/LLaVa-Breast/src_pos_emb4views_new_loss
 PATCH_SITE=/restricted/projectnb/batmanlab/atang4/MammoFM/backend/patch_site
+MAMMOFM_ROOT=/restricted/projectnb/batmanlab/atang4/MammoFM
 CHECKPOINT=/restricted/projectnb/batmanlab/atang4/data/checkpoints_v1_bu_ve_old_loss/llava-llama3.1_8B_breast_clip-finetune_512-lora/checkpoint-5500
+
+MODEL_BASE_LOCAL=$("$PYTHON" "$MAMMOFM_ROOT/backend/config.py") || {
+  echo "ERROR: Llama snapshot not under HF_HOME=$HF_HOME (see README / local_hf_env.inc.sh)"
+  exit 1
+}
 
 # Reuse a completed job with embeddings + source.json (no UI).
 JOB=/restricted/projectnb/batmanlab/atang4/data/jobs/500f8458-82ba-455f-a6c7-43036a287d3b
@@ -59,13 +76,18 @@ print('patch_ok')
 "
 
 echo "=== Running Stage 1 validation (plain torch — ctchat does not use DeepSpeed config) ==="
+CTCHAT_EXTRA=()
+if [[ "$SMOKE_LOAD_8BIT" == "1" || "$SMOKE_LOAD_8BIT" == "true" || "$SMOKE_LOAD_8BIT" == "yes" ]]; then
+  CTCHAT_EXTRA+=(--load-8bit)
+fi
 "$PYTHON" -u llava/serve/ctchat_validation_llama.py \
     --model-path "$CHECKPOINT" \
-    --model-base meta-llama/Meta-Llama-3.1-8B-Instruct \
+    --model-base "$MODEL_BASE_LOCAL" \
     --source_json "$JOB/source.json" \
     --bu_path "$JOB/embed_bu" \
     --out-path "$OUT" \
-    --max-new-tokens 24
+    --max-new-tokens "$SMOKE_MAX_NEW_TOKENS" \
+    "${CTCHAT_EXTRA[@]}"
 
 /restricted/projectnb/batmanlab/shawn24/llava_breast/bin/python3.10 -c "
 import json

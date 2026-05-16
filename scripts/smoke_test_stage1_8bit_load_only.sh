@@ -31,18 +31,23 @@ export HF_DATASETS_OFFLINE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 export MAMMOFM_SKIP_CPU_BEFORE_LORA_MERGE=1
-export MAMMOFM_NO_KV_CACHE=1
 export MAMMOFM_CPU_GENERATE=0
 
 PYTHON=/restricted/projectnb/batmanlab/shawn24/llava_breast/bin/python3.10
 PATCH_SITE="$ROOT/backend/patch_site"
 LLAVA_SRC=/restricted/projectnb/batmanlab/shawn24/PhD/LLaVa-Breast-scc/LLaVa-Breast/src_pos_emb4views_new_loss
 CHECKPOINT=/restricted/projectnb/batmanlab/atang4/data/checkpoints_v1_bu_ve_old_loss/llava-llama3.1_8B_breast_clip-finetune_512-lora/checkpoint-5500
+
+MODEL_BASE_LOCAL=$("$PYTHON" "$ROOT/backend/config.py") || {
+  echo "ERROR: Llama snapshot not under HF_HOME=$HF_HOME"
+  exit 1
+}
+
 export PYTHONPATH="${PATCH_SITE}:${LLAVA_SRC}"
 
 "$PYTHON" "$ROOT/backend/smoke_stage1_load_merge_only.py" \
   --model-path "$CHECKPOINT" \
-  --model-base meta-llama/Meta-Llama-3.1-8B-Instruct
+  --model-base "$MODEL_BASE_LOCAL"
 
 echo "=== smoke 8-bit load-only complete ==="
 date

@@ -20,6 +20,8 @@ const STATUS_PROGRESS_FALLBACK = {
 let uploadFiles = [];
 let lastPreview = { slots: {}, warnings: [], rows: [] };
 let galleryObjectUrls = [];
+let elapsedTimerId = null;
+let jobStartMs = null;
 
 function revokeGalleryUrls() {
   galleryObjectUrls.forEach((u) => URL.revokeObjectURL(u));
@@ -149,6 +151,44 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+function formatElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const sec = s % 60;
+  const min = m % 60;
+  if (h > 0) {
+    return `${h}:${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  }
+  return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function tickElapsed() {
+  const el = document.getElementById("elapsedTime");
+  if (!el || jobStartMs == null) return;
+  el.textContent = formatElapsed(performance.now() - jobStartMs);
+}
+
+function startElapsedTimer() {
+  stopElapsedTimer();
+  jobStartMs = performance.now();
+  tickElapsed();
+  elapsedTimerId = setInterval(tickElapsed, 1000);
+}
+
+function stopElapsedTimer() {
+  if (elapsedTimerId != null) {
+    clearInterval(elapsedTimerId);
+    elapsedTimerId = null;
+  }
+  jobStartMs = null;
+}
+
+function resetElapsedDisplay() {
+  const el = document.getElementById("elapsedTime");
+  if (el) el.textContent = "—";
+}
+
 async function runPreview() {
   const fd = new FormData();
   uploadFiles.forEach((f) => fd.append("files", f));
@@ -185,6 +225,7 @@ function syncFilesFromList(fileList) {
 
 async function pollStatus(jobId) {
   while (true) {
+    tickElapsed();
     const res = await fetch(`/api/status/${jobId}`);
     const data = await res.json();
 
@@ -198,6 +239,12 @@ async function pollStatus(jobId) {
         if (el) el.className = "step done";
       });
       setProgressFromStatus("done", 1);
+      if (jobStartMs != null) {
+        document.getElementById("elapsedTime").textContent = formatElapsed(
+          performance.now() - jobStartMs
+        );
+      }
+      stopElapsedTimer();
       const r = await fetch(`/api/results/${jobId}`);
       const reports = await r.json();
       if (!r.ok) {
@@ -212,6 +259,12 @@ async function pollStatus(jobId) {
     }
 
     if (data.status === "failed") {
+      if (jobStartMs != null) {
+        document.getElementById("elapsedTime").textContent = formatElapsed(
+          performance.now() - jobStartMs
+        );
+      }
+      stopElapsedTimer();
       showError(data.error || "Pipeline failed.");
       return;
     }
@@ -222,7 +275,8 @@ async function pollStatus(jobId) {
   }
 }
 
-document.getElementById("fileInput").addEventListener("change", (e) => {
+const fileInput = document.getElementById("fileInput");
+fileInput.addEventListener("change", (e) => {
   syncFilesFromList(e.target.files);
 });
 
@@ -238,22 +292,44 @@ dropZone.addEventListener("drop", (e) => {
   syncFilesFromList(e.dataTransfer.files);
 });
 
+dropZone.addEventListener("click", (e) => {
+  if (e.target.closest(".btn-ghost")) return;
+  fileInput.click();
+});
+
+dropZone.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    fileInput.click();
+  }
+});
+
 document.getElementById("refreshDetection").addEventListener("click", () => runPreview());
 
-document.getElementById("reportForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
+function setRunButtonsDisabled(disabled) {
+  document.getElementById("submitBtn").disabled = disabled;
+  const cpuBtn = document.getElementById("submitCpuBtn");
+  if (cpuBtn) cpuBtn.disabled = disabled;
+}
 
+/** @param {boolean} forceCpuStage1 - If true, always send use_cpu_stage1 (main CPU pathway button). */
+async function submitJob(forceCpuStage1) {
   const n = Object.keys(lastPreview.slots || {}).length;
   if (n !== 4) {
     showError("All four views (LCC, LMLO, RCC, RMLO) must be detected before running.");
     return;
   }
 
+  stopElapsedTimer();
+  resetElapsedDisplay();
+
   document.getElementById("progress").classList.remove("hidden");
   document.getElementById("results").classList.add("hidden");
   document.getElementById("errorBox").classList.add("hidden");
-  document.getElementById("submitBtn").disabled = true;
-  document.getElementById("statusMsg").textContent = "Submitting…";
+  setRunButtonsDisabled(true);
+  document.getElementById("statusMsg").textContent = forceCpuStage1
+    ? "Submitting (Stage 1 will use CPU — slower)…"
+    : "Submitting…";
   setProgressFromStatus("pending", STATUS_PROGRESS_FALLBACK.pending);
 
   const fd = new FormData();
@@ -264,21 +340,36 @@ document.getElementById("reportForm").addEventListener("submit", async (e) => {
   if (eid) fd.append("exam_id", eid);
   const csv = document.getElementById("classifierCsv").files[0];
   if (csv) fd.append("classifier_csv", csv);
+  const useCpu =
+    forceCpuStage1 || document.getElementById("useCpuStage1").checked;
+  if (useCpu) fd.append("use_cpu_stage1", "1");
 
   try {
     const res = await fetch("/api/run", { method: "POST", body: fd });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       showError(formatErrorDetail(body.detail));
-      document.getElementById("submitBtn").disabled = false;
+      setRunButtonsDisabled(false);
       return;
     }
     document.getElementById("jobIdField").value = body.job_id || "";
+    startElapsedTimer();
     await pollStatus(body.job_id);
   } catch (err) {
+    stopElapsedTimer();
+    resetElapsedDisplay();
     showError(err.message || String(err));
   }
-  document.getElementById("submitBtn").disabled = false;
+  setRunButtonsDisabled(false);
+}
+
+document.getElementById("reportForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await submitJob(false);
+});
+
+document.getElementById("submitCpuBtn").addEventListener("click", () => {
+  submitJob(true);
 });
 
 document.querySelectorAll(".btn-copy").forEach((btn) => {
@@ -298,5 +389,4 @@ document.querySelectorAll(".btn-copy").forEach((btn) => {
   });
 });
 
-/* initial empty table */
 renderChecklist([]);

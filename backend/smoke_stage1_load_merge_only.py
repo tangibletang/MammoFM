@@ -30,12 +30,13 @@ def main() -> int:
     ap.add_argument("--load-4bit", action="store_true", help="Use 4-bit instead of 8-bit")
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
+    model_base = cfg.resolve_hf_cached_repo(args.model_base)
 
     disable_torch_init()
     name = get_model_name_from_path(args.model_path)
     load_pretrained_model_llama(
         args.model_path,
-        args.model_base,
+        model_base,
         name,
         load_8bit=not args.load_4bit,
         load_4bit=args.load_4bit,

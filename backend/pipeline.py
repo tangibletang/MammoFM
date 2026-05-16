@@ -11,6 +11,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
+from gpu_preflight import emit_stage1_gpu_preflight
 
 # In-memory job store: job_id → {"status": str, "message": str, "error": str|None}
 _jobs: dict[str, dict] = {}
@@ -22,6 +23,19 @@ def _embedding_script_path() -> Path:
     if raw:
         return Path(raw).resolve()
     return (Path(__file__).resolve().parent / "save_img_embedding_mammofm.py").resolve()
+
+
+def _require_local_hf_snapshot(resolved: str, *, label: str, hf_home: str) -> str:
+    """Fail before subprocess if we would pass a Hub id (gated 401) instead of a snapshot dir."""
+    p = Path(resolved)
+    if p.is_dir() and (p / "config.json").is_file():
+        return str(p.resolve())
+    raise RuntimeError(
+        f"{label}: expected a local snapshot directory with config.json, got {resolved!r}. "
+        f"HF_HOME={hf_home!r}. Seed hub cache (e.g. rsync to node-local HF_HOME from "
+        f"{cfg.SHARED_PROJECT_HF_HOME}) or set an absolute path via MAMMOFM_MODEL_BASE / "
+        f"MAMMOFM_MODEL_ID; optional MAMMOFM_HF_FALLBACK_HOME."
+    )
 
 
 def create_job() -> str:
@@ -70,6 +84,7 @@ async def run_pipeline(
     exam_id: str,
     image_paths: dict,       # {"lcc": Path, "lmlo": Path, "rcc": Path, "rmlo": Path}
     classifier_csv_path: Optional[Path] = None,
+    stage1_cpu_override: Optional[bool] = None,
 ):
     job_dir = Path(cfg.JOBS_DIR) / job_id
     log_dir = job_dir / "logs"
@@ -106,6 +121,7 @@ async def run_pipeline(
             )
         if not enc.is_file():
             raise RuntimeError(f"Mammo-CLIP encoder missing: {enc}")
+        _hf_home_enc = os.environ.get("HF_HOME", cfg.HF_HOME)
         await _run(
             [
                 cfg.PYTHON_BIN, str(enc),
@@ -117,7 +133,14 @@ async def run_pipeline(
             job_id,
             log_dir / "encode.log",
             cwd=cfg.LLAVA_SRC,
-            env={"PYTHONPATH": cfg.LLAVA_SRC},
+            env={
+                "PYTHONPATH": cfg.LLAVA_SRC,
+                "HF_HOME": _hf_home_enc,
+                "TRANSFORMERS_OFFLINE": "1",
+                "HF_DATASETS_OFFLINE": "1",
+                # Avoid CUDA SDPA backends that pick CUTLASS kernels missing on some GPUs (e.g. V100).
+                "PYTORCH_ENABLE_MEM_EFFICIENT_SDPA": "0",
+            },
         )
 
         # ── Step 4: build source JSON for ctchat ─────────────────────────────
@@ -144,6 +167,7 @@ async def run_pipeline(
 
         # ── Step 5: Stage 1 — LLaVA inference (plain torch; ctchat ignores --deepspeed) ──
         _update(job_id, "stage1", "Stage 1: generating preliminary report (LLaVA)…")
+        emit_stage1_gpu_preflight(log_dir)
         val_results = job_dir / "val_results.json"
 
         _load_8 = os.environ.get("MAMMOFM_STAGE1_LOAD_8BIT", "").lower() in (
@@ -158,38 +182,73 @@ async def run_pipeline(
         )
         if _load_8 and _load_4:
             _load_4 = False
-        _max_tok = (os.environ.get("MAMMOFM_STAGE1_MAX_NEW_TOKENS") or "256").strip() or "256"
+        # 256 new tokens often OOMs on ~16GB with fp16+GPU+long multimodal prefix; 128 is safer.
+        _max_tok = (os.environ.get("MAMMOFM_STAGE1_MAX_NEW_TOKENS") or "128").strip() or "128"
+
+        # Per-job UI / server env: stage1_cpu_override wins over MAMMOFM_STAGE1_CPU_GENERATE for this run.
+        if stage1_cpu_override is True:
+            _want_cpu = True
+        elif stage1_cpu_override is False:
+            _want_cpu = False
+        else:
+            _raw_cpu = (os.environ.get("MAMMOFM_STAGE1_CPU_GENERATE") or "").strip().lower()
+            if _raw_cpu in ("1", "true", "yes"):
+                _want_cpu = True
+            elif _raw_cpu in ("0", "false", "no"):
+                _want_cpu = False
+            else:
+                _want_cpu = False
+        # CPU Stage 1: fp16 LoRA merge + CPU decode only (sitecustomize); never mix with 8/4-bit in this stack.
+        if _want_cpu:
+            _load_8 = False
+            _load_4 = False
 
         _quant = _load_8 or _load_4
-        # Default: fp16 Stage 1 decodes on GPU (fast). Opt into CPU with MAMMOFM_STAGE1_CPU_GENERATE=1
-        # if you hit OOM (slow). Quantized loads cannot use CPU generation (see sitecustomize).
-        _want_cpu = os.environ.get("MAMMOFM_STAGE1_CPU_GENERATE", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
         _stage1_cpu_generate = _want_cpu and not _quant
 
+        # Fragmentation tuning only (same kernels/ops); override entirely via MAMMOFM_STAGE1_CUDA_ALLOC_CONF.
+        _stage1_alloc = (os.environ.get("MAMMOFM_STAGE1_CUDA_ALLOC_CONF") or "").strip()
+        if not _stage1_alloc:
+            # Omit expandable_segments by default: on PyTorch 2.1 + bitsandbytes + tight VRAM it can hit
+            # CUDACachingAllocator INTERNAL ASSERT (!block->expandable_segment_). Opt in via env if needed.
+            _stage1_alloc = "max_split_size_mb:128"
+
+        # Node-local HF_HOME from start_server/local_hf_env (must match subprocess; cfg.HF_HOME can be import-time stale).
+        _hf_home = cfg.effective_hf_home()
+        _model_base_arg = _require_local_hf_snapshot(
+            cfg.resolve_hf_cached_repo_with_fallback(
+                os.environ.get("MAMMOFM_MODEL_BASE", cfg.MODEL_BASE),
+                hf_home=_hf_home,
+            ),
+            label="Stage 1 (--model-base)",
+            hf_home=_hf_home,
+        )
+
         stage1_env = {
-                "HF_HOME": cfg.HF_HOME,
+                "HF_HOME": _hf_home,
                 "TRANSFORMERS_OFFLINE": "1",
                 "HF_DATASETS_OFFLINE": "1",
                 "TOKENIZERS_PARALLELISM": "false",
                 "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
                 "PYTHONPATH": f"{Path(__file__).resolve().parent / 'patch_site'}{os.pathsep}{cfg.LLAVA_SRC}",
-                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-                "PYTORCH_ENABLE_MEM_EFFICIENT_SDPA": "1",
-                "MAMMOFM_NO_KV_CACHE": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": _stage1_alloc,
+                # mem-efficient SDPA can launch CUTLASS paths that fail on V100: "cutlassF: no kernel found".
+                "PYTORCH_ENABLE_MEM_EFFICIENT_SDPA": "0",
                 "MAMMOFM_CPU_GENERATE": "1" if _stage1_cpu_generate else "0",
         }
+        # Optional: MAMMOFM_NO_KV_CACHE=1 forces use_cache=False in sitecustomize (usually worse for long
+        # multimodal prompts — leave unset for normal GPU incremental decode). Inherited from os.environ if set.
         if _load_8 or _load_4:
             stage1_env["MAMMOFM_SKIP_CPU_BEFORE_LORA_MERGE"] = "1"
 
+        _ctchat_script = Path(cfg.LLAVA_SRC) / "llava/serve/ctchat_validation_llama.py"
+        _stage1_runner = Path(__file__).resolve().parent / "run_ctchat_with_sitecustomize.py"
         stage1_cmd = [
                 cfg.PYTHON_BIN, "-u",
-                "llava/serve/ctchat_validation_llama.py",
+                str(_stage1_runner),
+                str(_ctchat_script),
                 "--model-path", cfg.CHECKPOINT_DIR,
-                "--model-base", cfg.MODEL_BASE,
+                "--model-base", _model_base_arg,
                 "--source_json", str(source_json),
                 "--bu_path", embed_bu_root,
                 "--out-path", str(val_results),
@@ -225,19 +284,34 @@ async def run_pipeline(
         # ── Step 7: Stage 2 — LLaMA reconciliation ───────────────────────────
         _update(job_id, "stage2", "Stage 2: generating final report (LLaMA)…")
         final_csv = job_dir / "final.csv"
+        launcher = str(Path(__file__).resolve().parent / "final_stage_launcher.py")
+        _model_id_arg = _require_local_hf_snapshot(
+            cfg.resolve_hf_cached_repo_with_fallback(
+                os.environ.get("MAMMOFM_MODEL_ID", cfg.MODEL_ID),
+                hf_home=_hf_home,
+            ),
+            label="Stage 2 (--model-id)",
+            hf_home=_hf_home,
+        )
         await _run(
             [
-                cfg.PYTHON_BIN, cfg.FINAL_STAGE_SCRIPT,
+                cfg.PYTHON_BIN, launcher,
                 "--input-csv", str(intermediate_csv),
                 "--output-csv", str(final_csv),
-                "--model-id", cfg.MODEL_ID,
+                "--model-id", _model_id_arg,
                 "--max-new-tokens", "320",
                 "--temperature", "0.3",
                 "--top-p", "0.9",
             ],
             job_id,
             log_dir / "stage2.log",
-            env={"HF_HOME": cfg.HF_HOME, "PYTHONPATH": cfg.LLAVA_SRC},
+            env={
+                "HF_HOME": _hf_home,
+                "TRANSFORMERS_OFFLINE": "1",
+                "HF_DATASETS_OFFLINE": "1",
+                "PYTHONPATH": cfg.LLAVA_SRC,
+                "PYTORCH_ENABLE_MEM_EFFICIENT_SDPA": "0",
+            },
         )
 
         _update(job_id, "done", "Complete")
