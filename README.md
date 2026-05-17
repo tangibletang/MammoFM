@@ -20,11 +20,11 @@ Model weights and upstream LLaVA code live in shared lab paths; this repo wires 
 
 ## Why Stage 1 defaults to 8-bit (bitsandbytes)
 
-**Practical scheduling, not a claim that 8-bit is “more accurate.”**
+**I had to make an alteration to the workflow, defaulting Stage 1 to 8-bit**
 
-- **Many older / smaller GPU nodes** do not reliably run full **fp16** LLaVA + a **7–8B** Llama backbone for multimodal generation: you can hit **OOM**, or PyTorch attention/back-end paths that error on some architectures (we disable a few brittle SDPA modes in the job environment).
-- **Large-VRM nodes (e.g. A100-class)** are attractive for **fp16 Stage 1**, but on SCC they are often **heavily subscribed**, so waiting for them slows everyone down.
-- **8-bit weights** for the **language-model backbone** (via bitsandbytes) cut **weight memory** sharply so Stage 1 fits **the GPUs we actually get** under the default `qsub` resource request, while vision/projector paths stay in higher precision as wired in the stack (plus small runtime patches under `backend/patch_site/`).
+- The default V100 GPUs do not reliably run full **fp16** LLaVA + a **7–8B** Llama backbone for multimodal generation: you can hit **OOM**, or PyTorch attention/back-end paths that error on some architectures (we disable a few brittle SDPA modes in the job environment).
+- We could use a large-VRM nodes (e.g. A100-class), but on SCC they are always being used, so we wouldn't be able to start a node.
+- 8-bit weights for the language-model backbone (via bitsandbytes) cut weight memory sharply so Stage 1 fits the GPUs we actually get under the default `qsub` resource request.
 
 To force **fp16 Stage 1** when you have enough VRAM:
 
@@ -49,6 +49,9 @@ qsub -v MAMMOFM_STAGE1_LOAD_8BIT=0 /restricted/projectnb/batmanlab/atang4/MammoF
 **What we do *not* see systematically:** a consistent “8-bit always understates malignancy”-style bias has **not** been characterized here; overlap with fp16 is **high** for normal screening-style prose. If you need **strict reproducibility** (e.g. matching a published fp16 eval), run **fp16 Stage 1** on hardware that can hold it.
 
 Stage 2 (final report) is a **separate** Llama pass over Stage 1 text + structured fields; it is **not** the 8-bit vs fp16 comparator for the *whole* product, but it will reflect whatever wording Stage 1 produced.
+
+
+**Note:** To use the fp16 Stage 1, you can click the "generate with CPU" which will take longer but still use the default fp16 Stagen 1. 
 
 ---
 
@@ -203,10 +206,4 @@ qsub scripts/test_encoding.sh
 
 ---
 
-## Notes
 
-- **View order** must be LMLO, LCC, RMLO, RCC (matches BU records consumed by the encoder)
-- **MammoCLIP checkpoint**: `epoch4.tar` by default — if reports look off, epoch3 is the next thing to try
-- **Llama offline cache**: gated Hub IDs are resolved to local snapshots (`backend/config.py`); node-local `HF_HOME` can be empty before rsync, with fallback to the project cache
-- **CPU Stage 1** (slow, reliable if GPU path fails): `MAMMOFM_STAGE1_CPU_GENERATE=1` — see `scripts/STAGE1_CPU_FALLBACK.md`
-- **DeepSpeed**: not what the interactive FastAPI path relies on for single-job `generate`; earlier docs mentioning “DeepSpeed for Stage 1” referred to the historical training / cluster layout, not a laptop requirement for this UI
