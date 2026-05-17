@@ -59,6 +59,88 @@ def _update(job_id: str, status: str, message: str):
     _jobs[job_id]["message"] = message
 
 
+def _stage1_status_from_log_line(raw: str) -> Optional[str]:
+    """Map a stdout/stderr line from ctchat to a short UI status (None = ignore)."""
+    chunk = raw.strip()
+    if not chunk:
+        return None
+    if "\r" in chunk:
+        chunk = chunk.split("\r")[-1].strip()
+    s = chunk.lower()
+
+    if "saved conversations" in s or ("saved" in s and "out_path" in s):
+        return "Stage 1: saving results…"
+    if "it/s" in s or "%|" in s or "generat" in s:
+        return "Stage 1: generating report (decoding)…"
+    if "merge" in s and "lora" in s:
+        return "Stage 1: merging LoRA…"
+    if "bitsandbytes" in s or "8-bit" in s or "4-bit" in s or "quantiz" in s:
+        return "Stage 1: loading quantized weights…"
+    if "vision_tower" in s or "mm_projector" in s or "image encoder" in s:
+        return "Stage 1: loading vision / projector…"
+    if "loading" in s and ("shard" in s or "checkpoint" in s or "safetensors" in s):
+        return "Stage 1: loading checkpoint shards…"
+    if "loading" in s and "model" in s:
+        return "Stage 1: loading model…"
+    if "tokenizer" in s or "apply_chat_template" in s:
+        return "Stage 1: preparing tokenizer / chat template…"
+    if "embed" in s and ("image" in s or "mamm" in s):
+        return "Stage 1: wiring image embeddings…"
+    return None
+
+
+async def _run_streaming_stage1(
+    cmd: list[str],
+    job_id: str,
+    log_file: Path,
+    cwd: Optional[str] = None,
+    env: Optional[dict] = None,
+    *,
+    min_message_interval_s: float = 0.7,
+) -> None:
+    """Run Stage 1 subprocess with stdout streamed to log and live ``_update`` hints from log lines."""
+    merged_env = {**os.environ, **(env or {})}
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=cwd,
+        env=merged_env,
+    )
+    if proc.stdout is None:
+        raise RuntimeError("subprocess stdout not available")
+
+    loop = asyncio.get_running_loop()
+    last_push = 0.0
+
+    def try_push(line: str) -> None:
+        nonlocal last_push
+        msg = _stage1_status_from_log_line(line)
+        if not msg:
+            return
+        now = loop.time()
+        if now - last_push < min_message_interval_s:
+            return
+        last_push = now
+        _update(job_id, "stage1", msg)
+
+    with open(log_file, "wb") as lf:
+        while True:
+            line_b = await proc.stdout.readline()
+            if not line_b:
+                break
+            lf.write(line_b)
+            lf.flush()
+            try_push(line_b.decode("utf-8", errors="replace"))
+
+    rc = await proc.wait()
+    if rc != 0:
+        raise RuntimeError(
+            f"Command failed (exit {rc}): {' '.join(cmd)}\nSee {log_file}"
+        )
+
+
 async def _run(cmd: list[str], job_id: str, log_file: Path, cwd: Optional[str] = None, env: Optional[dict] = None):
     """Run a subprocess, stream stdout/stderr to log_file. Raises on non-zero exit."""
     merged_env = {**os.environ, **(env or {})}
@@ -166,7 +248,7 @@ async def run_pipeline(
         source_json.write_text(json.dumps([record], indent=2))
 
         # ── Step 5: Stage 1 — LLaVA inference (plain torch; ctchat ignores --deepspeed) ──
-        _update(job_id, "stage1", "Stage 1: generating preliminary report (LLaVA)…")
+        _update(job_id, "stage1", "Stage 1: starting LLaVA subprocess…")
         emit_stage1_gpu_preflight(log_dir)
         val_results = job_dir / "val_results.json"
 
@@ -259,7 +341,7 @@ async def run_pipeline(
         elif _load_4:
             stage1_cmd.append("--load-4bit")
 
-        await _run(
+        await _run_streaming_stage1(
             stage1_cmd,
             job_id,
             log_dir / "stage1.log",

@@ -1,5 +1,6 @@
 """FastAPI server for MammoFM web UI."""
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import List, Optional
@@ -51,6 +52,7 @@ async def api_run(
     exam_id: Optional[str] = Form(default=None),
     classifier_csv: Optional[UploadFile] = File(None),
     use_cpu_stage1: Optional[str] = Form(default=None),
+    slot_map: Optional[str] = Form(default=None),
 ):
     if not files or len(files) < 1:
         raise HTTPException(status_code=400, detail="Upload at least one image.")
@@ -61,17 +63,34 @@ async def api_run(
         resolved.append((name, await f.read()))
 
     names = [n for n, _ in resolved]
-    slots, warnings = uu.slot_uploaded_files(names)
-    if len(slots) != len(uu.REQUIRED_VIEWS):
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "Could not identify all four required views from filenames "
-                "(need LCC, LMLO, RCC, RMLO in names).",
-                "warnings": warnings,
-                "slots": slots,
-            },
-        )
+    warnings: List[str]
+    raw_map = (slot_map or "").strip()
+    if raw_map:
+        try:
+            parsed = json.loads(raw_map)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"slot_map must be valid JSON: {exc}",
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=400, detail="slot_map JSON must be an object.")
+        try:
+            slots, warnings = uu.validate_slot_map(parsed, names)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        slots, warnings = uu.slot_uploaded_files(names)
+        if len(slots) != len(uu.REQUIRED_VIEWS):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Could not identify all four required views from filenames "
+                    "(need LCC, LMLO, RCC, RMLO in names).",
+                    "warnings": warnings,
+                    "slots": slots,
+                },
+            )
 
     by_name: dict[str, bytes] = {}
     for name, blob in resolved:

@@ -91,6 +91,45 @@ def checklist_rows(slots: Dict[str, str], warnings: List[str]) -> List[List[str]
     return rows
 
 
+def validate_slot_map(
+    raw: Dict[str, object],
+    upload_basenames: List[str],
+) -> Tuple[Dict[str, str], List[str]]:
+    """Validate client JSON slot map: all REQUIRED_VIEWS, values are upload basenames, four distinct files.
+
+    Uploaded files must have distinct basenames when using manual assignment (same rule as multipart bytes map).
+    """
+    names_list = [Path(n).name for n in upload_basenames]
+    names_set = set(names_list)
+    if len(names_list) != len(names_set):
+        raise ValueError(
+            "Uploaded files must have distinct names when using manual view assignment."
+        )
+
+    slots: Dict[str, str] = {}
+    for view in REQUIRED_VIEWS:
+        if view not in raw:
+            raise ValueError(f"slot_map is missing required key {view!r}.")
+        val = raw[view]
+        if not isinstance(val, str) or not val.strip():
+            raise ValueError(f"slot_map[{view!r}] must be a non-empty filename string.")
+        bn = Path(val.strip()).name
+        if bn not in names_set:
+            raise ValueError(
+                f"slot_map[{view!r}]={bn!r} is not among uploaded files {sorted(names_set)}."
+            )
+        slots[view] = bn
+
+    assigned = list(slots.values())
+    if len(set(assigned)) != len(assigned):
+        raise ValueError(
+            "slot_map assigns the same file to more than one view; each view needs a different file."
+        )
+
+    warnings = ["Manual view assignment."]
+    return slots, warnings
+
+
 def normalize_to_png_path(source: Union[str, Path, bytes], destination: Path) -> None:
     """Open image (path or raw bytes), convert to RGB, write PNG."""
     destination.parent.mkdir(parents=True, exist_ok=True)

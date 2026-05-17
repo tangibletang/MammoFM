@@ -1,11 +1,5 @@
 const POLL_INTERVAL = 3000;
 const VIEW_ORDER = ["LCC", "LMLO", "RCC", "RMLO"];
-const STEP_MAP = {
-  encoding: "step-encoding",
-  stage1: "step-stage1",
-  converting: "step-converting",
-  stage2: "step-stage2",
-};
 
 const STATUS_PROGRESS_FALLBACK = {
   pending: 0.05,
@@ -17,8 +11,20 @@ const STATUS_PROGRESS_FALLBACK = {
   failed: 1,
 };
 
+const STATUS_PHASE_LABELS = {
+  pending: "Starting…",
+  encoding: "Encoding images (Mammo-CLIP)",
+  stage1: "Stage 1: preliminary report (LLaVA)",
+  converting: "Converting to intermediate format",
+  stage2: "Stage 2: final report (LLaMA)",
+  done: "Complete",
+  failed: "Failed",
+};
+
 let uploadFiles = [];
 let lastPreview = { slots: {}, warnings: [], rows: [] };
+/** @type {Record<string, string> | null} view → basename; null = use auto lastPreview.slots only */
+let manualSlots = null;
 let galleryObjectUrls = [];
 let elapsedTimerId = null;
 let jobStartMs = null;
@@ -36,26 +42,28 @@ function setProgressFromStatus(status, apiProgress) {
       ? apiProgress
       : STATUS_PROGRESS_FALLBACK[status] ?? 0.05;
   bar.value = v;
+  const done = status === "done" || status === "failed";
+  bar.classList.toggle("job-progress--active", !done && v < 1);
 }
 
-function setStepActive(status) {
-  Object.values(STEP_MAP).forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.className = "step";
-  });
-  if (STEP_MAP[status]) {
-    const el = document.getElementById(STEP_MAP[status]);
-    if (el) el.className = "step active";
+function setStatusPhaseAndDetail(status, message) {
+  const phaseEl = document.getElementById("statusPhase");
+  const hintEl = document.getElementById("statusStepHint");
+  const label = STATUS_PHASE_LABELS[status] || status || "Working…";
+  const msg = (message != null && String(message).trim()) || "";
+
+  if (phaseEl) {
+    phaseEl.textContent = msg || label;
   }
-}
-
-function markStepsDone(status) {
-  const order = ["encoding", "stage1", "converting", "stage2"];
-  const idx = order.indexOf(status);
-  order.slice(0, idx).forEach((s) => {
-    const el = document.getElementById(STEP_MAP[s]);
-    if (el) el.className = "step done";
-  });
+  if (hintEl) {
+    if (msg && msg !== label) {
+      hintEl.textContent = label;
+      hintEl.classList.remove("hidden");
+    } else {
+      hintEl.textContent = "";
+      hintEl.classList.add("hidden");
+    }
+  }
 }
 
 function showError(msg) {
@@ -80,7 +88,71 @@ function formatErrorDetail(detail) {
 }
 
 function fileByName(name) {
+  if (!name) return undefined;
   return uploadFiles.find((f) => f.name === name);
+}
+
+function getAutoSlots() {
+  return lastPreview.slots || {};
+}
+
+function ensureManualSlotsFromAuto() {
+  manualSlots = {};
+  const auto = getAutoSlots();
+  for (const v of VIEW_ORDER) {
+    manualSlots[v] = auto[v] || "";
+  }
+}
+
+function getEffectiveSlots() {
+  if (manualSlots != null) return manualSlots;
+  return getAutoSlots();
+}
+
+function buildManualChecklistRows(slots) {
+  return VIEW_ORDER.map((v) => {
+    const fn = slots[v] || "";
+    return [v, fn, fn ? "Detected" : "Missing"];
+  });
+}
+
+function refreshPreviewUI() {
+  const slots = getEffectiveSlots();
+  if (manualSlots != null) {
+    renderChecklist(buildManualChecklistRows(slots));
+  } else {
+    renderChecklist(lastPreview.rows || []);
+  }
+  renderGallery(slots);
+  renderWarnings(lastPreview.warnings || []);
+}
+
+function assignFileToView(view, newFile) {
+  ensureManualSlotsFromAuto();
+  const s = { ...manualSlots };
+  const prev = s[view] || "";
+  if (newFile === prev) return;
+  if (!newFile) {
+    s[view] = "";
+  } else {
+    const other = VIEW_ORDER.find((v) => v !== view && (s[v] || "") === newFile);
+    if (other) {
+      s[other] = prev;
+    }
+    s[view] = newFile;
+  }
+  manualSlots = s;
+  refreshPreviewUI();
+}
+
+function swapViews(a, b) {
+  ensureManualSlotsFromAuto();
+  const s = { ...manualSlots };
+  const t = s[a] || "";
+  s[a] = s[b] || "";
+  s[b] = t;
+  manualSlots = s;
+  refreshPreviewUI();
 }
 
 function renderChecklist(rows) {
@@ -105,6 +177,10 @@ function renderGallery(slots) {
   VIEW_ORDER.forEach((view) => {
     const slot = document.createElement("div");
     slot.className = "thumb-slot";
+    slot.dataset.view = view;
+    slot.draggable = true;
+    slot.setAttribute("aria-label", `${view} thumbnail slot`);
+
     const label = document.createElement("span");
     label.className = "thumb-label";
     label.textContent = view;
@@ -118,6 +194,7 @@ function renderGallery(slots) {
       const img = document.createElement("img");
       img.src = url;
       img.alt = `${view}: ${file.name}`;
+      img.draggable = false;
       slot.appendChild(img);
     } else {
       const ph = document.createElement("div");
@@ -125,6 +202,46 @@ function renderGallery(slots) {
       ph.textContent = "—";
       slot.appendChild(ph);
     }
+
+    const sel = document.createElement("select");
+    sel.className = "thumb-assign";
+    sel.setAttribute("aria-label", `Assign file to ${view}`);
+    const optEmpty = document.createElement("option");
+    optEmpty.value = "";
+    optEmpty.textContent = "— Choose file —";
+    sel.appendChild(optEmpty);
+    uploadFiles.forEach((f) => {
+      const o = document.createElement("option");
+      o.value = f.name;
+      o.textContent = f.name;
+      sel.appendChild(o);
+    });
+    sel.value = name && fileByName(name) ? name : "";
+    sel.addEventListener("change", () => {
+      assignFileToView(view, sel.value);
+    });
+    slot.appendChild(sel);
+
+    slot.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", view);
+      e.dataTransfer.effectAllowed = "move";
+    });
+    slot.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      slot.classList.add("thumb-drag-over");
+    });
+    slot.addEventListener("dragleave", () => {
+      slot.classList.remove("thumb-drag-over");
+    });
+    slot.addEventListener("drop", (e) => {
+      e.preventDefault();
+      slot.classList.remove("thumb-drag-over");
+      const from = e.dataTransfer.getData("text/plain");
+      const to = view;
+      if (from && from !== to) swapViews(from, to);
+    });
+
     host.appendChild(slot);
   });
 }
@@ -195,6 +312,7 @@ async function runPreview() {
 
   if (!uploadFiles.length) {
     lastPreview = { slots: {}, warnings: [], rows: [] };
+    manualSlots = null;
     renderChecklist(lastPreview.rows);
     renderGallery({});
     renderWarnings([]);
@@ -213,9 +331,8 @@ async function runPreview() {
     lastPreview = { slots: {}, warnings: [e.message || String(e)], rows: [] };
   }
 
-  renderChecklist(lastPreview.rows || []);
-  renderGallery(lastPreview.slots || {});
-  renderWarnings(lastPreview.warnings || []);
+  manualSlots = null;
+  refreshPreviewUI();
 }
 
 function syncFilesFromList(fileList) {
@@ -229,16 +346,15 @@ async function pollStatus(jobId) {
     const res = await fetch(`/api/status/${jobId}`);
     const data = await res.json();
 
-    document.getElementById("statusMsg").textContent = data.message || data.status;
+    setStatusPhaseAndDetail(data.status, data.message || data.status);
     setProgressFromStatus(data.status, data.progress);
 
     if (data.status === "done") {
-      markStepsDone("done");
-      Object.values(STEP_MAP).forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) el.className = "step done";
-      });
       setProgressFromStatus("done", 1);
+      setStatusPhaseAndDetail(
+        "done",
+        data.message || "All pipeline stages finished."
+      );
       if (jobStartMs != null) {
         document.getElementById("elapsedTime").textContent = formatElapsed(
           performance.now() - jobStartMs
@@ -259,6 +375,8 @@ async function pollStatus(jobId) {
     }
 
     if (data.status === "failed") {
+      setProgressFromStatus("failed", data.progress ?? 1);
+      setStatusPhaseAndDetail("failed", data.error || data.message || "Pipeline failed.");
       if (jobStartMs != null) {
         document.getElementById("elapsedTime").textContent = formatElapsed(
           performance.now() - jobStartMs
@@ -269,8 +387,6 @@ async function pollStatus(jobId) {
       return;
     }
 
-    setStepActive(data.status);
-    markStepsDone(data.status);
     await new Promise((r) => setTimeout(r, POLL_INTERVAL));
   }
 }
@@ -312,11 +428,20 @@ function setRunButtonsDisabled(disabled) {
   if (cpuBtn) cpuBtn.disabled = disabled;
 }
 
-/** @param {boolean} forceCpuStage1 - If true, always send use_cpu_stage1 (main CPU pathway button). */
+function slotsReadyForRun() {
+  const slots = getEffectiveSlots();
+  return VIEW_ORDER.every((v) => {
+    const fn = slots[v];
+    return fn && fileByName(fn);
+  });
+}
+
+/** @param {boolean} forceCpuStage1 */
 async function submitJob(forceCpuStage1) {
-  const n = Object.keys(lastPreview.slots || {}).length;
-  if (n !== 4) {
-    showError("All four views (LCC, LMLO, RCC, RMLO) must be detected before running.");
+  if (!slotsReadyForRun()) {
+    showError(
+      "All four views (LCC, LMLO, RCC, RMLO) must have an image assigned. Use filenames, drag-and-drop between slots, or the menus under each thumbnail."
+    );
     return;
   }
 
@@ -327,13 +452,20 @@ async function submitJob(forceCpuStage1) {
   document.getElementById("results").classList.add("hidden");
   document.getElementById("errorBox").classList.add("hidden");
   setRunButtonsDisabled(true);
-  document.getElementById("statusMsg").textContent = forceCpuStage1
+
+  const submitMsg = forceCpuStage1
     ? "Submitting (Stage 1 will use CPU — slower)…"
     : "Submitting…";
+  setStatusPhaseAndDetail("pending", submitMsg);
   setProgressFromStatus("pending", STATUS_PROGRESS_FALLBACK.pending);
 
   const fd = new FormData();
   uploadFiles.forEach((f) => fd.append("files", f));
+
+  if (manualSlots != null) {
+    fd.append("slot_map", JSON.stringify(manualSlots));
+  }
+
   const pid = document.getElementById("patientId").value.trim();
   const eid = document.getElementById("examId").value.trim();
   if (pid) fd.append("patient_id", pid);
@@ -354,6 +486,7 @@ async function submitJob(forceCpuStage1) {
     }
     document.getElementById("jobIdField").value = body.job_id || "";
     startElapsedTimer();
+    setStatusPhaseAndDetail("pending", body.message || "Job queued. Waiting for worker…");
     await pollStatus(body.job_id);
   } catch (err) {
     stopElapsedTimer();

@@ -26,15 +26,22 @@
     <main class="panel panel-hero">
       <h2 class="panel-title">Upload images</h2>
 
-      <div class="detection-callout" role="region" aria-label="How view detection works">
-        <h3 class="callout-title">Automatic view detection</h3>
-        <p>
-          Each filename is scanned for standard view tokens: <code>LCC</code>, <code>LMLO</code>, <code>RCC</code>, and <code>RMLO</code>
-          (case-insensitive). Matching files are assigned to that view. All four views must be detected before you can run the pipeline.
-        </p>
-        <p class="callout-sub">
-          After you add or change files, use <strong>Re-run view detection</strong> below to refresh the checklist and thumbnails.
-        </p>
+      <div class="hero-layout">
+      <div class="hero-main">
+
+      <div class="detection-callout" role="region" aria-label="View detection and assignment">
+        <details class="detection-details" open>
+          <summary>View detection and assignment</summary>
+          <div class="detection-body">
+            <h3 class="callout-title">How it works</h3>
+            <p>
+              Filenames are scanned for <code>LCC</code>, <code>LMLO</code>, <code>RCC</code>, and <code>RMLO</code> (case-insensitive). All four views must be assigned before you run.
+            </p>
+            <p>
+              <strong>Re-run view detection</strong> after you change files (it resets manual fixes). Drag thumbnails between views or use the menu under each view to correct mappings.
+            </p>
+          </div>
+        </details>
       </div>
 
       <div
@@ -60,7 +67,7 @@
 
       <div class="detection-actions">
         <button type="button" class="btn-secondary" id="refreshDetection">Re-run view detection</button>
-        <p class="detection-actions-hint">Use after replacing files so the mapping and previews stay in sync.</p>
+        <p class="detection-actions-hint">Use after replacing files; clears manual slot fixes.</p>
       </div>
 
       <div id="previewWarnings" class="preview-warnings hidden"></div>
@@ -76,24 +83,45 @@
 
       <div class="gallery" id="thumbGallery" aria-label="Detected views preview"></div>
 
+      </div>
+
+      <aside class="hero-aside" aria-label="Run pipeline">
       <form id="reportForm" class="run-form">
+        <div class="classifier-field">
+          <label class="field classifier-field-label" for="classifierCsv">
+            Classifier CSV <span class="optional-tag">optional</span>
+          </label>
+          <p class="classifier-field-lead">
+            Add a row keyed to this exam if you want Stage&nbsp;2 to merge in your <code>zero_shot_per_image</code> scores (otherwise Stage&nbsp;2 uses the preliminary report only).
+          </p>
+          <input type="file" name="classifier_csv" accept=".csv" id="classifierCsv" />
+          <details class="classifier-details">
+            <summary>Why patient / exam columns?</summary>
+            <p class="classifier-field-help">
+              The server picks the row where <code>patient_id</code> and <code>exam_id</code> match this job (auto-generated or from Advanced). Multi-row batch CSVs need those keys.
+            </p>
+          </details>
+        </div>
+
         <div class="run-actions">
           <button type="submit" id="submitBtn" class="btn-primary">Generate report</button>
-          <p class="run-actions-sub">Uses GPU for Stage&nbsp;1 (default: 8-bit LLM weights on GPU to fit 16&nbsp;GB cards; wording may differ slightly from full fp16). Usually fastest.</p>
+          <p class="run-actions-sub">GPU Stage&nbsp;1 by default (8‑bit LLM when enabled — fastest on typical SCC GPUs).</p>
+          <details class="run-modes-details">
+            <summary>More about Stage&nbsp;1 on GPU</summary>
+            <p class="run-modes-body">
+              Wording can differ slightly vs full fp16; 8‑bit saves VRAM on shared nodes. See repo <code>README.md</code> for rationale.
+            </p>
+          </details>
           <button type="button" id="submitCpuBtn" class="btn-cpu">
             Generate on CPU <span class="btn-cpu-badge">slower</span>
           </button>
-          <p class="run-actions-hint-cpu">
-            Stage&nbsp;1 (LLaVA) runs on the CPU with <strong>full fp16</strong> weights (no 8-bit) — closest to the standard precision path, but expect <strong>several minutes</strong> per case. You are less likely to hit GPU memory errors on decode. Mammo-CLIP encoding and Stage&nbsp;2 still use the GPU when available.
-          </p>
+          <p class="run-actions-hint-cpu">Stage&nbsp;1 on CPU uses full fp16 (slow); Mammo‑CLIP and Stage&nbsp;2 still use GPU when available.</p>
         </div>
 
         <details class="advanced">
           <summary>Advanced options</summary>
           <div class="advanced-body">
-            <p class="advanced-lead">
-              Defaults match single-patient runs: patient and exam IDs are generated if left blank. Stage&nbsp;2 still uses the GPU when available.
-            </p>
+            <p class="advanced-lead">IDs default from the job if left blank.</p>
             <label class="field">
               Patient ID
               <input type="text" name="patient_id" id="patientId" autocomplete="off" placeholder="Auto if blank" />
@@ -102,17 +130,11 @@
               Exam ID
               <input type="text" name="exam_id" id="examId" autocomplete="off" placeholder="Auto if blank" />
             </label>
-            <label class="field">
-              Classifier CSV (optional)
-              <input type="file" name="classifier_csv" id="classifierCsv" accept=".csv" />
-            </label>
             <label class="field checkbox-field">
               <input type="checkbox" name="use_cpu_stage1" id="useCpuStage1" value="1" />
-              <span>Run Stage&nbsp;1 (LLaVA) on <strong>CPU</strong></span>
+              <span>Stage&nbsp;1 on CPU (matches the “Generate on CPU” path).</span>
             </label>
-            <p class="field-hint">
-              Slower; uses <strong>full fp16</strong> Stage&nbsp;1 on CPU (8-bit GPU load is turned off for this run). Does not move Mammo-CLIP encoding or Stage&nbsp;2 off the GPU.
-            </p>
+            <p class="field-hint">Mirrors the main CPU button; turn off 8‑bit GPU load for that run.</p>
             <label class="field">
               Job ID
               <input type="text" id="jobIdField" readonly placeholder="Assigned after run" class="input-mono" />
@@ -120,21 +142,19 @@
           </div>
         </details>
       </form>
+      </aside>
+
+      </div>
     </main>
 
     <div id="progress" class="panel hidden">
       <h2 class="panel-title">Progress</h2>
-      <progress id="jobProgress" max="1" value="0"></progress>
-      <p class="elapsed-row" aria-live="polite">
-        Elapsed: <span id="elapsedTime" class="elapsed-digits">—</span>
+      <p id="statusPhase" class="status-phase" aria-live="polite"></p>
+      <p id="statusStepHint" class="status-step-hint hidden" aria-live="polite"></p>
+      <progress id="jobProgress" max="1" value="0" aria-labelledby="statusPhase"></progress>
+      <p class="elapsed-row">
+        Elapsed: <span id="elapsedTime" class="elapsed-digits" aria-live="polite">—</span>
       </p>
-      <div class="steps">
-        <div class="step" id="step-encoding">Image encoding</div>
-        <div class="step" id="step-stage1">Stage 1 — LLaVA</div>
-        <div class="step" id="step-converting">Converting</div>
-        <div class="step" id="step-stage2">Stage 2 — LLaMA</div>
-      </div>
-      <p id="statusMsg" class="status-msg"></p>
     </div>
 
     <div id="results" class="hidden">
