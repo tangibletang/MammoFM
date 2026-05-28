@@ -173,6 +173,7 @@ async def run_pipeline(
     image_paths: dict,       # {"lcc": Path, "lmlo": Path, "rcc": Path, "rmlo": Path}
     classifier_csv_path: Optional[Path] = None,
     stage1_cpu_override: Optional[bool] = None,
+    stage1_fp16_override: Optional[bool] = None,
 ):
     job_dir = Path(cfg.JOBS_DIR) / job_id
     log_dir = job_dir / "logs"
@@ -290,6 +291,11 @@ async def run_pipeline(
         if _want_cpu:
             _load_8 = False
             _load_4 = False
+        # Per-job fp16 override (16-bit A100 button): force unquantized GPU Stage 1, no CPU decode.
+        if stage1_fp16_override is True:
+            _load_8 = False
+            _load_4 = False
+            _want_cpu = False
 
         _quant = _load_8 or _load_4
         _stage1_cpu_generate = _want_cpu and not _quant

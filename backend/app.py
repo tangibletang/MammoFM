@@ -55,6 +55,7 @@ async def api_run(
     exam_id: Optional[str] = Form(default=None),
     classifier_csv: Optional[UploadFile] = File(None),
     use_cpu_stage1: Optional[str] = Form(default=None),
+    use_fp16_stage1: Optional[str] = Form(default=None),
     slot_map: Optional[str] = Form(default=None),
 ):
     if not files or len(files) < 1:
@@ -133,6 +134,7 @@ async def api_run(
             image_paths,
             cls_path,
             stage1_cpu_override=_optional_form_bool(use_cpu_stage1),
+            stage1_fp16_override=_optional_form_bool(use_fp16_stage1),
         )
     )
     return {"job_id": job_id, "patient_id": patient, "exam_id": exam, "warnings": warnings}

@@ -431,6 +431,8 @@ function setRunButtonsDisabled(disabled) {
   document.getElementById("submitBtn").disabled = disabled;
   const cpuBtn = document.getElementById("submitCpuBtn");
   if (cpuBtn) cpuBtn.disabled = disabled;
+  const fp16Btn = document.getElementById("submitFp16Btn");
+  if (fp16Btn) fp16Btn.disabled = disabled;
 }
 
 function slotsReadyForRun() {
@@ -441,8 +443,8 @@ function slotsReadyForRun() {
   });
 }
 
-/** @param {boolean} forceCpuStage1 */
-async function submitJob(forceCpuStage1) {
+/** @param {"default"|"cpu"|"fp16"} mode */
+async function submitJob(mode) {
   if (!slotsReadyForRun()) {
     showError(
       "All four views (LCC, LMLO, RCC, RMLO) must have an image assigned. Use filenames, drag-and-drop between slots, or the menus under each thumbnail."
@@ -458,9 +460,9 @@ async function submitJob(forceCpuStage1) {
   document.getElementById("errorBox").classList.add("hidden");
   setRunButtonsDisabled(true);
 
-  const submitMsg = forceCpuStage1
-    ? "Submitting (Stage 1 will use CPU — slower)…"
-    : "Submitting…";
+  let submitMsg = "Submitting…";
+  if (mode === "cpu") submitMsg = "Submitting (Stage 1 will use CPU — slower)…";
+  if (mode === "fp16") submitMsg = "Submitting (Stage 1 fp16 on A100 — unquantized)…";
   setStatusPhaseAndDetail("pending", submitMsg);
   setProgressFromStatus("pending", STATUS_PROGRESS_FALLBACK.pending);
 
@@ -477,9 +479,12 @@ async function submitJob(forceCpuStage1) {
   if (eid) fd.append("exam_id", eid);
   const csv = document.getElementById("classifierCsv").files[0];
   if (csv) fd.append("classifier_csv", csv);
+  // fp16 mode explicitly suppresses CPU (mutually exclusive at the backend anyway).
   const useCpu =
-    forceCpuStage1 || document.getElementById("useCpuStage1").checked;
+    mode === "cpu" ||
+    (mode !== "fp16" && document.getElementById("useCpuStage1").checked);
   if (useCpu) fd.append("use_cpu_stage1", "1");
+  if (mode === "fp16") fd.append("use_fp16_stage1", "1");
 
   try {
     const res = await fetch("/api/run", { method: "POST", body: fd });
@@ -503,11 +508,15 @@ async function submitJob(forceCpuStage1) {
 
 document.getElementById("reportForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  await submitJob(false);
+  await submitJob("default");
 });
 
 document.getElementById("submitCpuBtn").addEventListener("click", () => {
-  submitJob(true);
+  submitJob("cpu");
+});
+
+document.getElementById("submitFp16Btn").addEventListener("click", () => {
+  submitJob("fp16");
 });
 
 document.querySelectorAll(".btn-copy").forEach((btn) => {

@@ -116,6 +116,10 @@
             Generate on CPU <span class="btn-cpu-badge">slower</span>
           </button>
           <p class="run-actions-hint-cpu">Stage&nbsp;1 on CPU uses full fp16 (slow); Mammo‑CLIP and Stage&nbsp;2 still use GPU when available.</p>
+          <button type="button" id="submitFp16Btn" class="btn-cpu">
+            Generate 16-bit on A100 <span class="btn-cpu-badge">unquantized</span>
+          </button>
+          <p class="run-actions-hint-cpu">Stage&nbsp;1 runs unquantized fp16 on the GPU. Best fidelity; needs an A100-class GPU.</p>
         </div>
 
         <details class="advanced">
