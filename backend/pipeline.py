@@ -48,6 +48,12 @@ def get_job(job_id: str) -> Optional[dict]:
     return _jobs.get(job_id)
 
 
+def set_job_meta(job_id: str, **fields) -> None:
+    job = _jobs.get(job_id)
+    if job is not None:
+        job.update(fields)
+
+
 def mark_job_failed(job_id: str, error: str) -> None:
     if job_id in _jobs:
         _jobs[job_id]["status"] = "failed"

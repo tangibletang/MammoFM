@@ -371,6 +371,11 @@ async function pollStatus(jobId) {
         reports.preliminary_report || "";
       document.getElementById("finalReport").textContent = reports.final_report || "";
       document.getElementById("results").classList.remove("hidden");
+      const pdfBtn = document.getElementById("downloadPdfBtn");
+      if (pdfBtn) {
+        pdfBtn.disabled = false;
+        pdfBtn.onclick = () => { window.location.href = `/api/report.pdf/${jobId}`; };
+      }
       return;
     }
 

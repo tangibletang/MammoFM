@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -9,9 +10,11 @@ _BACKEND = Path(__file__).resolve().parent
 os.environ["MAMMOFM_EMBED_SCRIPT"] = str(_BACKEND / "save_img_embedding_mammofm.py")
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 import config as cfg
+import pdf_utils
 import pipeline as pl
 import upload_utils as uu
 
@@ -159,6 +162,38 @@ async def api_results(job_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return payload
+
+
+@app.get("/api/report.pdf/{job_id}")
+async def api_report_pdf(job_id: str):
+    job = pl.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] != "done":
+        raise HTTPException(status_code=409, detail=f"Job not ready: {job['status']}")
+    payload = pl.read_results(job_id)
+    uploads_dir = pl.JOBS_DIR / job_id / "uploads"
+    image_paths = {}
+    if uploads_dir.exists():
+        for f in uploads_dir.iterdir():
+            view = f.stem.upper()
+            if view in ("LCC", "LMLO", "RCC", "RMLO"):
+                image_paths[view] = f
+    created_at = datetime.fromisoformat(job["created_at"]) if job.get("created_at") else None
+    pdf_bytes = pdf_utils.build_report_pdf(
+        job_id=job_id,
+        patient_id=job.get("patient_id"),
+        exam_id=job.get("exam_id"),
+        preliminary=payload.get("preliminary_report", ""),
+        final=payload.get("final_report", ""),
+        image_paths=image_paths,
+        created_at=created_at,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="mammo_report_{job_id[:8]}.pdf"'},
+    )
 
 
 # Mount static files LAST so API routes take priority

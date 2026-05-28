@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One entrypoint for SCC. Usage: mammofm submit | submit-cpu | status | tunnel | verify | log (optional)
+# One entrypoint for SCC. Usage: mammofm submit | submit-cpu | status | tunnel | verify | log
+#   verify-cpu | verify-8bit | verify-all | autopilot-run | autopilot-submit
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,6 +27,16 @@ help() {
   echo "  qsub $ROOT/scripts/smoke_test_stage1_patch.sh   # e2e, GPU Stage 1 by default (may OOM on 16GB)"
   echo "  qsub -v SMOKE_CPU_STAGE1=1 $ROOT/scripts/smoke_test_stage1_patch.sh   # CPU Stage 1 (slow, reliable)"
   echo "  qsub $ROOT/scripts/smoke_test_stage1_8bit_load_only.sh # 8-bit load canary only"
+  echo ""
+  echo "Verification (pathway smoke tests):"
+  echo "  $0 verify-cpu    — qsub CPU-fallback pathway; writes verify_cpu.OK / .FAIL"
+  echo "  $0 verify-8bit   — qsub 8-bit GPU pathway (A100/A40); writes verify_8bit.OK / .FAIL"
+  echo "  $0 verify-all    — qsub both; prints both job ids"
+  echo ""
+  echo "Autopilot (runs both verify jobs, monitors, self-heals, then tests the full webapp):"
+  echo "  $0 autopilot-submit  — qsub the autopilot to a CPU node (survives SSH disconnect)"
+  echo "  $0 autopilot-run     — run the autopilot in the foreground (use in tmux)"
+  echo "    HARNESS_MAX_RETRIES=3  HARNESS_POLL_INTERVAL=60  (env-configurable)"
   echo ""
   echo "After submit: ./scripts/mammofm status until your job is running, then ./scripts/mammofm tunnel,"
   echo "run the printed ssh on your **laptop** (leave it open), open the URL — not on SCC."
@@ -80,6 +91,48 @@ case "${1:-help}" in
     cd "$ROOT/backend"
     PYTHONPATH=. "$PY" verify_backend.py
     PYTHONPATH=. "$PY" verify_sitecustomize_stage1.py
+    ;;
+  verify-cpu)
+    JID=$(qsub -terse "$ROOT/scripts/smoke_e2e_cpu.sh")
+    echo "CPU verification submitted: job $JID"
+    echo "Monitor: qstat -j $JID"
+    echo "Sentinel: /restricted/projectnb/batmanlab/atang4/data/validation/verify_cpu.OK"
+    ;;
+  verify-8bit)
+    JID=$(qsub -terse "$ROOT/scripts/smoke_e2e_a100.sh")
+    echo "8-bit GPU verification submitted: job $JID"
+    echo "Monitor: qstat -j $JID"
+    echo "Sentinel: /restricted/projectnb/batmanlab/atang4/data/validation/verify_8bit.OK"
+    ;;
+  verify-all)
+    JID_CPU=$(qsub -terse "$ROOT/scripts/smoke_e2e_cpu.sh")
+    JID_8BIT=$(qsub -terse "$ROOT/scripts/smoke_e2e_a100.sh")
+    echo "CPU  verification: job $JID_CPU"
+    echo "8bit verification: job $JID_8BIT"
+    echo "Monitor: qstat -u $USER"
+    ;;
+  autopilot-run)
+    exec "$ROOT/harness/autopilot.sh" "$@"
+    ;;
+  autopilot-submit)
+    RUN_DIR="$ROOT/harness/runs/$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$RUN_DIR"
+    JID=$(qsub -terse \
+      -l h_rt=48:00:00 \
+      -N mammofm-autopilot \
+      -j y \
+      -o "$RUN_DIR/autopilot.log" \
+      -b y \
+      "${BASH_SOURCE[0]}" autopilot-run)
+    echo "Autopilot submitted: job $JID"
+    echo "Run dir: $RUN_DIR"
+    echo ""
+    echo "Monitor from anywhere on SCC:"
+    echo "  qstat -j $JID"
+    echo "  tail -f $RUN_DIR/autopilot.log"
+    echo "  cat  $RUN_DIR/state.json"
+    echo "  cat  $RUN_DIR/report.md    # final summary when done"
+    echo "  qdel $JID                  # to stop early"
     ;;
   help|-h|--help)
     help

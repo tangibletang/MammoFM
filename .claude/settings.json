@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(qsub:*)",
+      "Bash(qstat:*)",
+      "Bash(qdel:*)",
+      "Bash(tail:*/restricted/projectnb/batmanlab/atang4/data/validation/*)",
+      "Bash(tail:*/restricted/projectnb/batmanlab/atang4/MammoFM/harness/*)",
+      "Bash(grep:*/restricted/projectnb/batmanlab/atang4/data/validation/*)",
+      "Bash(grep:*/restricted/projectnb/batmanlab/atang4/MammoFM/harness/*)",
+      "Bash(cat:*/restricted/projectnb/batmanlab/atang4/data/validation/*)",
+      "Bash(cat:*/restricted/projectnb/batmanlab/atang4/MammoFM/harness/*)",
+      "Bash(ls:*/restricted/projectnb/batmanlab/atang4/data/validation*)",
+      "Bash(ls:*/restricted/projectnb/batmanlab/atang4/MammoFM/*)"
+    ]
+  }
+}
