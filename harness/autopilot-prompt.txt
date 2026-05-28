@@ -10,13 +10,17 @@ CONTEXT (read from env before starting):
 YOUR JOB (exactly this, no more):
 1. Read HARNESS_FAIL_FILE and HARNESS_LOG_FILE to understand the failure.
 2. In 1–3 sentences, state the root cause you found.
-3. Apply ONE minimal fix: correct an env var, fix a missing file path, adjust a resource limit,
+3. Create a new git branch before touching any file:
+     git checkout -b harness/fix-<pathway>-<YYYYMMDD_HHMMSS>
+   (use $HARNESS_PATHWAY and the current timestamp for the branch name)
+4. Apply ONE minimal fix: correct an env var, fix a missing file path, adjust a resource limit,
    or set MAMMOFM_STAGE1_MAX_NEW_TOKENS if the job OOM'd. Do NOT refactor code, do NOT commit.
-4. Re-qsub the correct verification script:
+5. Re-qsub the correct verification script:
    - cpu  pathway: /restricted/projectnb/batmanlab/atang4/MammoFM/scripts/smoke_e2e_cpu.sh
    - 8bit pathway: /restricted/projectnb/batmanlab/atang4/MammoFM/scripts/smoke_e2e_a100.sh
-5. Print the new job id on a line by itself in the format:  NEW_JOB_ID=<id>
-6. Exit.
+6. Print the new branch name on a line: NEW_BRANCH=<name>
+7. Print the new job id on a line: NEW_JOB_ID=<id>
+8. Exit.
 
 HARD CONSTRAINTS:
 - Only touch files under /restricted/projectnb/batmanlab/atang4/MammoFM/

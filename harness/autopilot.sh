@@ -216,6 +216,14 @@ _poll_one() {
         return
     fi
 
+    # Log the fix branch if claude created one
+    local FIX_BRANCH
+    FIX_BRANCH=$(echo "$CLAUDE_OUTPUT" | grep "^NEW_BRANCH=" | head -1 | cut -d= -f2 | tr -d '[:space:]')
+    if [[ -n "$FIX_BRANCH" ]]; then
+        echo "  [$PATHWAY] fix branch: $FIX_BRANCH"
+        _write_state "${PATHWAY}_fix_branch=$FIX_BRANCH"
+    fi
+
     # Try to parse NEW_JOB_ID from claude output; fallback to plain resubmit
     local NEW_JID
     NEW_JID=$(echo "$CLAUDE_OUTPUT" | grep "^NEW_JOB_ID=" | head -1 | cut -d= -f2 | tr -d '[:space:]')
