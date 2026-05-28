@@ -174,7 +174,7 @@ async def api_report_pdf(job_id: str):
     if job["status"] != "done":
         raise HTTPException(status_code=409, detail=f"Job not ready: {job['status']}")
     payload = pl.read_results(job_id)
-    uploads_dir = pl.JOBS_DIR / job_id / "uploads"
+    uploads_dir = Path(cfg.JOBS_DIR) / job_id / "uploads"
     image_paths = {}
     if uploads_dir.exists():
         for f in uploads_dir.iterdir():
