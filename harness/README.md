@@ -1,7 +1,16 @@
 # MammoFM Harness — Offline Autopilot
 
-The harness submits both verification pathways (CPU + 8-bit GPU) as qsub jobs, monitors them,
-invokes `claude -p` for minimal self-healing on failure, then validates the full webapp + PDF endpoint.
+The harness submits all three verification pathways (CPU+GPU, 16-bit A100, 8-bit GPU) as qsub jobs,
+monitors them, invokes `claude -p` for minimal self-healing on failure, then validates the full
+webapp + PDF endpoint.
+
+## Three pathways
+
+| Pathway | Stage 1 | Stage 2 | Resources | Script |
+|---|---|---|---|---|
+| **CPU + GPU** | fp16 on CPU | 4-bit on GPU | 1 CPU + 1 GPU (any) | `smoke_e2e_cpu.sh` |
+| **16-bit A100** | fp16 on GPU | 4-bit on GPU | A100/A40-class (CC ≥ 8.0) | `smoke_e2e_fp16_a100.sh` |
+| **8-bit A100** | 8-bit on GPU | 4-bit on GPU | A100/A40-class (CC ≥ 8.0) | `smoke_e2e_a100.sh` |
 
 ## Deployment table
 
@@ -44,12 +53,14 @@ tmux new -s mammofm-autopilot
 
 ```bash
 # Verification only
-./scripts/mammofm verify-cpu          # qsub CPU pathway, print job id
-./scripts/mammofm verify-8bit         # qsub 8-bit GPU pathway, print job id
-./scripts/mammofm verify-all          # both at once
+./scripts/mammofm verify-cpu          # qsub CPU+GPU pathway
+./scripts/mammofm verify-fp16         # qsub 16-bit A100 pathway
+./scripts/mammofm verify-8bit         # qsub 8-bit A100 pathway
+./scripts/mammofm verify-all          # all three at once
 
 # After jobs finish, check sentinels:
 cat /restricted/projectnb/batmanlab/atang4/data/validation/verify_cpu.OK
+cat /restricted/projectnb/batmanlab/atang4/data/validation/verify_fp16.OK
 cat /restricted/projectnb/batmanlab/atang4/data/validation/verify_8bit.OK
 
 # PDF integration test only (needs webapp already running)
@@ -78,13 +89,16 @@ SERVER_URL=http://<node>:8000 bash harness/integration_pdf_curl.sh
 
 ```json
 {
-  "run_dir": "harness/runs/20240601_120000",
-  "started":  "2024-06-01T12:00:00Z",
-  "cpu_status":  "ok | queued | repairing | needs_human | failed_final | submit_failed",
-  "cpu_job_id":  "1234567",
-  "cpu_retries": "1",
-  "8bit_status": "queued",
-  "8bit_job_id": "1234568",
+  "run_dir": "harness/runs/20260528_120000",
+  "started":  "2026-05-28T12:00:00Z",
+  "cpu_status":   "ok | queued | repairing | needs_human | failed_final | submit_failed",
+  "cpu_job_id":   "1234567",
+  "cpu_retries":  "1",
+  "fp16_status":  "queued",
+  "fp16_job_id":  "1234568",
+  "fp16_retries": "0",
+  "8bit_status":  "queued",
+  "8bit_job_id":  "1234569",
   "8bit_retries": "0",
   "webapp_status": "ok | skipped | failed | start_timeout | submit_failed"
 }

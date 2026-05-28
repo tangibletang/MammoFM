@@ -11,7 +11,17 @@
       "Bash(cat:*/restricted/projectnb/batmanlab/atang4/data/validation/*)",
       "Bash(cat:*/restricted/projectnb/batmanlab/atang4/MammoFM/harness/*)",
       "Bash(ls:*/restricted/projectnb/batmanlab/atang4/data/validation*)",
-      "Bash(ls:*/restricted/projectnb/batmanlab/atang4/MammoFM/*)"
+      "Bash(ls:*/restricted/projectnb/batmanlab/atang4/MammoFM/*)",
+      "Bash(git checkout -b harness/*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Edit(/restricted/projectnb/batmanlab/atang4/MammoFM/scripts/**)",
+      "Edit(/restricted/projectnb/batmanlab/atang4/MammoFM/backend/**)",
+      "Edit(/restricted/projectnb/batmanlab/atang4/MammoFM/harness/**)",
+      "Write(/restricted/projectnb/batmanlab/atang4/MammoFM/scripts/**)",
+      "Write(/restricted/projectnb/batmanlab/atang4/MammoFM/harness/runs/**)",
+      "Read(/restricted/projectnb/batmanlab/atang4/MammoFM/**)",
+      "Read(/restricted/projectnb/batmanlab/atang4/data/validation/**)"
     ]
   }
 }

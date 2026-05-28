@@ -88,6 +88,10 @@ python3 -c "import json; json.dump({
   'cpu_job_id': '',
   'cpu_retries': '0',
   'cpu_error_sig': '',
+  'fp16_status': 'pending',
+  'fp16_job_id': '',
+  'fp16_retries': '0',
+  'fp16_error_sig': '',
   '8bit_status': 'pending',
   '8bit_job_id': '',
   '8bit_retries': '0',
@@ -95,17 +99,26 @@ python3 -c "import json; json.dump({
   'webapp_status': 'pending',
 }, open('$STATE','w'), indent=2)"
 
-# ---- submit both verification jobs ----
+# ---- submit all three verification jobs ----
 
 echo ""
 echo "--- Submitting verification jobs ---"
 CPU_JID=$(qsub -terse "$SCRIPTS/smoke_e2e_cpu.sh" 2>/dev/null || echo "")
 if [[ -z "$CPU_JID" ]]; then
-    echo "ERROR: failed to submit CPU verification job" >&2
+    echo "ERROR: failed to submit CPU+GPU verification job" >&2
     _write_state "cpu_status=submit_failed"
 else
-    echo "CPU  pathway: job $CPU_JID"
+    echo "CPU+GPU pathway: job $CPU_JID"
     _write_state "cpu_job_id=$CPU_JID" "cpu_status=queued"
+fi
+
+FP16_JID=$(qsub -terse "$SCRIPTS/smoke_e2e_fp16_a100.sh" 2>/dev/null || echo "")
+if [[ -z "$FP16_JID" ]]; then
+    echo "ERROR: failed to submit 16-bit A100 verification job" >&2
+    _write_state "fp16_status=submit_failed"
+else
+    echo "fp16  pathway: job $FP16_JID"
+    _write_state "fp16_job_id=$FP16_JID" "fp16_status=queued"
 fi
 
 GPU_JID=$(qsub -terse "$SCRIPTS/smoke_e2e_a100.sh" 2>/dev/null || echo "")
@@ -113,7 +126,7 @@ if [[ -z "$GPU_JID" ]]; then
     echo "ERROR: failed to submit 8-bit GPU verification job" >&2
     _write_state "8bit_status=submit_failed"
 else
-    echo "8bit pathway: job $GPU_JID"
+    echo "8bit  pathway: job $GPU_JID"
     _write_state "8bit_job_id=$GPU_JID" "8bit_status=queued"
 fi
 
@@ -183,7 +196,12 @@ _poll_one() {
     _write_state "${STATUS_KEY}=repairing" "${RETRIES_KEY}=$((RETRIES+1))" "${SIG_KEY}=$NEW_SIG"
 
     local SCRIPT
-    [[ "$PATHWAY" == "cpu" ]] && SCRIPT="$SCRIPTS/smoke_e2e_cpu.sh" || SCRIPT="$SCRIPTS/smoke_e2e_a100.sh"
+    case "$PATHWAY" in
+        cpu)  SCRIPT="$SCRIPTS/smoke_e2e_cpu.sh" ;;
+        fp16) SCRIPT="$SCRIPTS/smoke_e2e_fp16_a100.sh" ;;
+        8bit) SCRIPT="$SCRIPTS/smoke_e2e_a100.sh" ;;
+        *) echo "  [$PATHWAY] unknown pathway"; return ;;
+    esac
 
     local QSUB_LOG
     QSUB_LOG=$(ls "$SENTINEL_DIR/smoke_e2e_${PATHWAY}."*.log 2>/dev/null | sort | tail -1 || echo "")
@@ -245,7 +263,7 @@ _poll_one() {
 }
 
 _all_resolved() {
-    for P in cpu 8bit; do
+    for P in cpu fp16 8bit; do
         local S
         S=$(_read_state "${P}_status")
         case "$S" in
@@ -262,13 +280,15 @@ while ! _all_resolved; do
     sleep "$POLL"
     echo ""
     echo "$(date -u +%H:%M:%SZ) — polling"
-    _poll_one cpu CPU_JID
+    _poll_one cpu  CPU_JID
+    _poll_one fp16 FP16_JID
     _poll_one 8bit GPU_JID
 done
 
 echo ""
-echo "--- Both pathways resolved ---"
+echo "--- All three pathways resolved ---"
 echo "  cpu  : $(_read_state cpu_status)"
+echo "  fp16 : $(_read_state fp16_status)"
 echo "  8bit : $(_read_state 8bit_status)"
 
 # ---- webapp + PDF integration test ----
@@ -321,6 +341,7 @@ fi
 # ---- final report ----
 
 CPU_S=$(_read_state cpu_status)
+FP16_S=$(_read_state fp16_status)
 GPU_S=$(_read_state 8bit_status)
 WEBAPP_S=$(_read_state webapp_status)
 TS_END=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -336,8 +357,9 @@ cat > "$REPORT" <<MDEOF
 
 | Pathway | Status |
 |---------|--------|
-| CPU fallback | $CPU_S |
-| 8-bit GPU (A100) | $GPU_S |
+| CPU + GPU (Stage1 fp16 on CPU) | $CPU_S |
+| 16-bit GPU on A100 (fp16 Stage1) | $FP16_S |
+| 8-bit GPU on A100 (production) | $GPU_S |
 | Webapp + PDF | $WEBAPP_S |
 
 ## Details
@@ -349,6 +371,7 @@ $(cat "$STATE")
 ## Sentinel files
 
 - CPU:  $SENTINEL_DIR/verify_cpu.OK (or .FAIL)
+- fp16: $SENTINEL_DIR/verify_fp16.OK (or .FAIL)
 - 8bit: $SENTINEL_DIR/verify_8bit.OK (or .FAIL)
 
 ## Log
@@ -360,6 +383,7 @@ echo ""
 echo "============================================"
 echo "  Autopilot complete"
 echo "  CPU  : $CPU_S"
+echo "  fp16 : $FP16_S"
 echo "  8bit : $GPU_S"
 echo "  Webapp: $WEBAPP_S"
 echo "  Report: $REPORT"

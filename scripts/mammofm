@@ -29,9 +29,10 @@ help() {
   echo "  qsub $ROOT/scripts/smoke_test_stage1_8bit_load_only.sh # 8-bit load canary only"
   echo ""
   echo "Verification (pathway smoke tests):"
-  echo "  $0 verify-cpu    — qsub CPU-fallback pathway; writes verify_cpu.OK / .FAIL"
-  echo "  $0 verify-8bit   — qsub 8-bit GPU pathway (A100/A40); writes verify_8bit.OK / .FAIL"
-  echo "  $0 verify-all    — qsub both; prints both job ids"
+  echo "  $0 verify-cpu    — qsub CPU+GPU pathway (Stage1 fp16 on CPU, Stage2 on GPU); verify_cpu.{OK,FAIL}"
+  echo "  $0 verify-fp16   — qsub 16-bit GPU pathway on A100/A40-class; verify_fp16.{OK,FAIL}"
+  echo "  $0 verify-8bit   — qsub 8-bit GPU pathway on A100/A40-class; verify_8bit.{OK,FAIL}"
+  echo "  $0 verify-all    — qsub all three; prints all job ids"
   echo ""
   echo "Autopilot (runs both verify jobs, monitors, self-heals, then tests the full webapp):"
   echo "  $0 autopilot-submit  — qsub the autopilot to a CPU node (survives SSH disconnect)"
@@ -94,9 +95,15 @@ case "${1:-help}" in
     ;;
   verify-cpu)
     JID=$(qsub -terse "$ROOT/scripts/smoke_e2e_cpu.sh")
-    echo "CPU verification submitted: job $JID"
+    echo "CPU+GPU verification submitted: job $JID"
     echo "Monitor: qstat -j $JID"
     echo "Sentinel: /restricted/projectnb/batmanlab/atang4/data/validation/verify_cpu.OK"
+    ;;
+  verify-fp16)
+    JID=$(qsub -terse "$ROOT/scripts/smoke_e2e_fp16_a100.sh")
+    echo "16-bit GPU (A100) verification submitted: job $JID"
+    echo "Monitor: qstat -j $JID"
+    echo "Sentinel: /restricted/projectnb/batmanlab/atang4/data/validation/verify_fp16.OK"
     ;;
   verify-8bit)
     JID=$(qsub -terse "$ROOT/scripts/smoke_e2e_a100.sh")
@@ -106,9 +113,11 @@ case "${1:-help}" in
     ;;
   verify-all)
     JID_CPU=$(qsub -terse "$ROOT/scripts/smoke_e2e_cpu.sh")
+    JID_FP16=$(qsub -terse "$ROOT/scripts/smoke_e2e_fp16_a100.sh")
     JID_8BIT=$(qsub -terse "$ROOT/scripts/smoke_e2e_a100.sh")
-    echo "CPU  verification: job $JID_CPU"
-    echo "8bit verification: job $JID_8BIT"
+    echo "CPU+GPU verification: job $JID_CPU"
+    echo "fp16 verification:   job $JID_FP16"
+    echo "8bit verification:   job $JID_8BIT"
     echo "Monitor: qstat -u $USER"
     ;;
   autopilot-run)

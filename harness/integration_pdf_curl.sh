@@ -6,7 +6,8 @@
 set -euo pipefail
 
 SERVER="${SERVER_URL:-http://localhost:8000}"
-SAMPLE_DIR="${MAMMOFM_SAMPLE_IMAGES:-/restricted/projectnb/batmanlab/shared/Data/RSNA_Breast_Imaging/Dataset/External/UPMC/DICOM/images_png_CC_MLO/Patient_36536418}"
+# Default: 4 named views in the Breast-CLIP-downstream repo root (LCC.png, LMLO.png, RCC.png, RMLO.png).
+SAMPLE_DIR="${MAMMOFM_SAMPLE_IMAGES:-/restricted/projectnb/batmanlab/atang4/Breast-CLIP-downstream/Breast-CLIP-downstream}"
 OUT_DIR="${INTEGRATION_OUT_DIR:-/tmp/mammofm_integration_$$}"
 MAX_WAIT="${INTEGRATION_MAX_WAIT:-600}"   # seconds before giving up
 POLL_INTERVAL=10

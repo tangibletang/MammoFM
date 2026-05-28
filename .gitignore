@@ -3,3 +3,6 @@ __pycache__/
 *.pyo
 .env
 *.log
+
+# Autopilot per-run artifacts (state.json, autopilot.log, report.md)
+harness/runs/
