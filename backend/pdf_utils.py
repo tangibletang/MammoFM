@@ -118,7 +118,7 @@ def build_report_pdf(
     image_paths: Mapping[str, Path],
     created_at: Optional[datetime] = None,
 ) -> bytes:
-    """Render a 3-page PDF: header+thumbnails, preliminary, final. Returns the PDF bytes."""
+    """Render a 2-page PDF: header+thumbnails on page 1, both reports on page 2. Returns the PDF bytes."""
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -151,8 +151,7 @@ def build_report_pdf(
     story.append(PageBreak())
     story.append(Paragraph("Preliminary Report (Stage 1)", s["h2"]))
     story.append(_report_paragraphs(preliminary, s["report"]))
-
-    story.append(PageBreak())
+    story.append(Spacer(1, 0.25 * inch))
     story.append(Paragraph("Final Report (Stage 2)", s["h2"]))
     story.append(_report_paragraphs(final, s["report"]))
 
