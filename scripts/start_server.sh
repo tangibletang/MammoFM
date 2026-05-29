@@ -1,7 +1,7 @@
 #!/bin/bash -l
 #$ -l gpus=1
-#$ -l gpu_c=7.0
-#$ -l h_rt=8:00:00
+#$ -l gpu_m=17G
+#$ -l h_rt=24:00:00
 #$ -N mammofm_server
 #$ -o /restricted/projectnb/batmanlab/atang4/data/server.log
 #$ -j y
